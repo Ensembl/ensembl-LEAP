@@ -11,7 +11,7 @@ def main():
     args = get_args()
     input_path = args.input_gff
     output_path = args.output_gff
-    ott_ids = []
+    ott_ids = set()
     with open(input_path, "r") as input_gff:
         for line in input_gff:
             if line.startswith("#"):
@@ -21,9 +21,9 @@ def main():
                 continue
             attr_dict = dict(item.split("=") for item in [x for x in fields[-1].strip().split(";") if x])
             if fields[2] == "gene" and attr_dict['gene_id'].startswith("OTT"):
-                ott_ids.append(attr_dict['gene_id'])
+                ott_ids.add(attr_dict['gene_id'])
             if fields[2] == "transcript" and attr_dict['transcript_id'].startswith("OTT"):
-                ott_ids.append(attr_dict['transcript_id'])
+                ott_ids.add(attr_dict['transcript_id'])
 
     with open(input_path, "r") as input_gff, open(output_path, "w") as output_gff:
         for line in input_gff:
@@ -37,7 +37,11 @@ def main():
                 else:
                     output_gff.write(line)
                     continue
-            if (attr_dict['Parent'] not in ott_ids) and (attr_dict['gene_id'] not in ott_ids):
+            # Transcript parents are gene IDs, so also check the transcript's
+            # own ID to remove OTT transcripts belonging to Ensembl genes.
+            if (attr_dict.get('transcript_id') not in ott_ids
+                    and attr_dict['Parent'] not in ott_ids
+                    and attr_dict['gene_id'] not in ott_ids):
                 output_gff.write(line)
 
 if __name__ == "__main__":

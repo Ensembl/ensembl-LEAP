@@ -27,17 +27,17 @@ workflow PROCESS_ANNOTATION {
     reads_sample_sheet
     
     main:
-    // Get the new anotation from the provided database and filter to remove partial transcripts
+    // Get and classify the annotation; retain partial coding models as overlap context.
     GET_CURRENT_ANNOTATION(reads_sample_sheet.splitCsv(header: true))
 
-    // Filter the annotation to remove partial transcripts
+    // Keep full-length/partial classifications for final-output eligibility.
     FILTER_PARTIAL_TRANSCRIPTS(GET_CURRENT_ANNOTATION.out.current_annotation_by_chromosome)
 
     // Split the current annotation based on multi-exon and single-exon transcripts
-    SPLIT_TRANSCRIPTS_BASED_ON_EXON_NUMBER(FILTER_PARTIAL_TRANSCRIPTS.out.current_annotation_ft)
+    SPLIT_TRANSCRIPTS_BASED_ON_EXON_NUMBER(FILTER_PARTIAL_TRANSCRIPTS.out.current_annotation_coding)
 
     // Split by strand
-    SPLIT_CURRENT_ANNOTATION_BY_STRAND(SPLIT_TRANSCRIPTS_BASED_ON_EXON_NUMBER.out.multi_exon_full_length_transcripts, "gff")
+    SPLIT_CURRENT_ANNOTATION_BY_STRAND(SPLIT_TRANSCRIPTS_BASED_ON_EXON_NUMBER.out.multi_exon_coding_transcripts, "gff")
 
     // Extract first and last exon 
     EXTRACT_FIRST_AND_LAST_EXONS(SPLIT_CURRENT_ANNOTATION_BY_STRAND.out.positive_annotation.mix(SPLIT_CURRENT_ANNOTATION_BY_STRAND.out.negative_annotation))
@@ -57,6 +57,7 @@ workflow PROCESS_ANNOTATION {
     do_not_extend_transcripts = GET_CURRENT_ANNOTATION.out.do_not_extend_transcripts_positive.mix(GET_CURRENT_ANNOTATION.out.do_not_extend_transcripts_negative)
     non_protein_coding_regions = FILTER_PARTIAL_TRANSCRIPTS.out.current_annotation_npc_negative.mix(FILTER_PARTIAL_TRANSCRIPTS.out.current_annotation_npc_positive).map { chromosome, strand, file -> ["${chromosome}_${strand}", file] }
     single_exon_gff = SPLIT_TRANSCRIPTS_BASED_ON_EXON_NUMBER.out.single_exon_positive_gff.mix(SPLIT_TRANSCRIPTS_BASED_ON_EXON_NUMBER.out.single_exon_negative_gff).map { chromosome, strand, file -> ["${chromosome}_${strand}", file] }
+    partial_annotation = FILTER_PARTIAL_TRANSCRIPTS.out.current_annotation_pt.flatMap { chromosome, file -> [["${chromosome}_positive", file], ["${chromosome}_negative", file]] }
 }
 
 /*

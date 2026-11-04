@@ -1,0 +1,3 @@
+gene_id	transcript_id	transcript_location	five_prime_extension	three_prime_extension	five_prime_support	five_prime_read_count	three_prime_support	three_prime_read_count
+ENSG00000121933.22	ENST00001035321.1	1:111480668-111503854	0	0	none	0	none	0
+ENSG00000282608.4	ENST00000241356.5	1:111499429-111503868	235	0	reads	4	none	0

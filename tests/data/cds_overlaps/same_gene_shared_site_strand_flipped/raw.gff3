@@ -1,0 +1,9 @@
+##gff-version 3
+1	test	transcript	200	450	.	-	.	transcript_id=source;gene_id=geneA;transcript_type=protein_coding;
+1	test	exon	200	250	.	-	.	transcript_id=source;gene_id=geneA;transcript_type=protein_coding;
+1	test	exon	400	450	.	-	.	transcript_id=source;gene_id=geneA;transcript_type=protein_coding;
+1	test	five_prime_UTR	200	220	.	-	.	transcript_id=source;gene_id=geneA;transcript_type=protein_coding;
+1	test	transcript	140	450	.	-	.	transcript_id=target;gene_id=geneA;transcript_type=protein_coding;
+1	test	exon	140	250	.	-	.	transcript_id=target;gene_id=geneA;transcript_type=protein_coding;
+1	test	exon	400	450	.	-	.	transcript_id=target;gene_id=geneA;transcript_type=protein_coding;
+1	test	CDS	150	180	.	-	.	transcript_id=target;gene_id=geneA;transcript_type=protein_coding;

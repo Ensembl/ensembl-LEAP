@@ -36,7 +36,7 @@ workflow {
     PROCESS_ANNOTATION(READ_PROCESSING.out.reads_sample_sheet)
 
     // Overlap read unique splice sites with cage and polyA data
-    OVERLAP_READS(READ_PROCESSING.out.unique_splice_sites, PROCESS_CAGE_AND_POLYA.out.cage_ch, PROCESS_CAGE_AND_POLYA.out.polya_ch, PROCESS_ANNOTATION.out.unique_splice_sites, PROCESS_ANNOTATION.out.exon_annotation, PROCESS_ANNOTATION.out.natural_overlaps, PROCESS_ANNOTATION.out.stranded_annotation, PROCESS_ANNOTATION.out.single_exon_beds, PROCESS_ANNOTATION.out.do_not_extend_transcripts, PROCESS_ANNOTATION.out.non_protein_coding_regions, PROCESS_ANNOTATION.out.single_exon_gff)
+    OVERLAP_READS(READ_PROCESSING.out.unique_splice_sites, PROCESS_CAGE_AND_POLYA.out.cage_ch, PROCESS_CAGE_AND_POLYA.out.polya_ch, PROCESS_ANNOTATION.out.unique_splice_sites, PROCESS_ANNOTATION.out.exon_annotation, PROCESS_ANNOTATION.out.natural_overlaps, PROCESS_ANNOTATION.out.stranded_annotation, PROCESS_ANNOTATION.out.single_exon_beds, PROCESS_ANNOTATION.out.do_not_extend_transcripts, PROCESS_ANNOTATION.out.non_protein_coding_regions, PROCESS_ANNOTATION.out.single_exon_gff, PROCESS_ANNOTATION.out.partial_annotation)
 }
 
 /*

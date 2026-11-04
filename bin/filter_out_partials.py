@@ -4,7 +4,7 @@ import argparse
 import gzip
 
 def get_args():
-    parser = argparse.ArgumentParser(description="Filter a GFF file to retain transcripts that have both five prime and three prime UTRs.")
+    parser = argparse.ArgumentParser(description="Classify coding transcripts by UTR completeness and retain all coding models for overlap processing.")
     parser.add_argument("input_file", help="Path to the input GFF file")
     parser.add_argument("output_prefix", help="Path to the output GFF file", default="filtered")
     return parser.parse_args()
@@ -61,7 +61,8 @@ def main():
     # Count UTRs in the input GFF file
     # utr_counts, non_protein_coding_tids = pd.DataFrame.from_dict(count_utr(input_file), orient='index').reset_index().rename(columns={'index': 'transcript_id'})
     utr_counts, non_protein_coding_tids = count_utr(input_file)
-    utr_counts = pd.DataFrame.from_dict(utr_counts, orient='index').reset_index().rename(columns={'index': 'transcript_id'})
+    coding_transcript_ids = set(utr_counts)
+    utr_counts = pd.DataFrame.from_dict(utr_counts, orient='index', columns=['five_prime_UTR', 'three_prime_UTR']).reset_index().rename(columns={'index': 'transcript_id'})
     
     # Filter transcript id's based on UTR counts
     full_transcripts_ids = utr_counts[(utr_counts['five_prime_UTR'] > 0) & (utr_counts['three_prime_UTR'] > 0)].set_index('transcript_id').to_dict(orient='index')
@@ -72,6 +73,10 @@ def main():
     
     # Filter the GFF file for partial transcripts
     filter_gff(input_file, output_file.replace(".gff", "_PT.gff"), partial_transcripts_ids)
+
+    # Partials take part in the normal overlap decisions, but are excluded when
+    # the final extended annotation and statistics are written.
+    filter_gff(input_file, output_file.replace(".gff", "_PC.gff"), coding_transcript_ids)
     
     # Filter the GFF file for non-protein coding transcripts
     filter_gff(input_file, output_file.replace(".gff", "_NPC.gff"), non_protein_coding_tids)

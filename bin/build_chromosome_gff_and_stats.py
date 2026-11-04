@@ -12,6 +12,8 @@ def get_args():
     parser.add_argument("black_list", type=str, help="File with blacklisted transcripts to exclude from the output.")
     parser.add_argument("output_gff", type=str, help="Output GFF file with extended annotations.")
     parser.add_argument("output_stats", type=str, help="Output file for extension statistics.")
+    parser.add_argument("--partial-annotation", required=True,
+                        help="Classified partial GFF; its models participate in overlap processing but are omitted from final GFF and stats. May be empty.")
     return parser.parse_args()
 
 def open_file(file_path):
@@ -30,6 +32,26 @@ def position_comparison(possible_extension, current_annotation, strand, end):
         output = True
     return output
 
+
+def partial_transcript_keys(path):
+    """Use exact IDs and locations, including version suffixes and PAR copies."""
+    keys = set()
+    with open_file(path) as handle:
+        for number, line in enumerate(handle, 1):
+            if not line.strip() or line.startswith('#'):
+                continue
+            fields = line.rstrip('\r\n').split('\t')
+            if len(fields) != 9:
+                raise ValueError(f'{path}:{number}: expected 9 GFF columns')
+            if fields[2] == 'gene':
+                continue
+            attrs = dict(item.split('=', 1) for item in fields[8].split(';') if '=' in item)
+            identifier = attrs.get('transcript_id')
+            if not identifier or identifier == '.' or fields[0] in ('', '.') or fields[6] not in ('+', '-'):
+                raise ValueError(f'{path}:{number}: partial record needs transcript_id, chromosome and strand')
+            keys.add((fields[0], fields[6], identifier))
+    return keys
+
 def main():
     # Parse command line arguments
     args = get_args()
@@ -39,6 +61,9 @@ def main():
     black_list = args.black_list
     output_gff = args.output_gff
     output_stats = args.output_stats
+    # Exclude whole partial models before applying either end, so their child
+    # records, statistics and gene-bound contributions cannot leak into output.
+    partials = partial_transcript_keys(args.partial_annotation)
     
     # Determine strand and options based on input file names
     if "positive" in input_fe_extensions:
@@ -81,8 +106,12 @@ def main():
     current_transcript = {}
     with open_file(input_annotation) as f, open("temp_output.gff", "w") as output_file:
         for line in f:
+            if not line.strip() or line.startswith('#'):
+                continue
             fields = line.strip().split('\t')
             attr_dict = dict(item.split('=', 1) for item in fields[8].split(';') if '=' in item)
+            if (fields[0], fields[6], attr_dict.get('transcript_id')) in partials:
+                continue
             if fields[2] == "transcript":
                 transcript_fields = fields.copy()
                 current_transcript[attr_dict['transcript_id']] = transcript_fields

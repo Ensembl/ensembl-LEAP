@@ -1,0 +1,5 @@
+1	test	transcript	150	500	.	+	.	transcript_id=source;gene_id=geneA;transcript_type=protein_coding;
+1	test	exon	150	250	.	+	.	transcript_id=source;gene_id=geneA;transcript_type=protein_coding;
+1	test	exon	400	500	.	+	.	transcript_id=source;gene_id=geneA;transcript_type=protein_coding;
+1	test	five_prime_UTR	150	220	.	+	.	transcript_id=source;gene_id=geneA;transcript_type=protein_coding;
+1	test	three_prime_UTR	430	500	.	+	.	transcript_id=source;gene_id=geneA;transcript_type=protein_coding;

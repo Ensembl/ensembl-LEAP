@@ -38,6 +38,7 @@ workflow OVERLAP_READS {
     blacklist_transcripts
     non_protein_coding_regions
     single_exon_gff
+    partial_annotation
 
     main:
     // Overlap reads with CAGE data
@@ -71,7 +72,7 @@ workflow OVERLAP_READS {
     FIX_UNSAFE_OVERLAPS(CHECK_EXTENSION_SAFETY.out.safety_checked_extensions)
 
     // Create the extensions gff per chromosome with stats
-    EXTEND_TRANSCRIPTS(FIX_UNSAFE_OVERLAPS.out.fixed_extensions.join(stranded_annotation).join(blacklist_transcripts))
+    EXTEND_TRANSCRIPTS(FIX_UNSAFE_OVERLAPS.out.fixed_extensions.join(stranded_annotation).join(blacklist_transcripts).join(partial_annotation))
 
     emit:
     EXTEND_TRANSCRIPTS.out.extended_transcripts
