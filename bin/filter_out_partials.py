@@ -4,7 +4,7 @@ import argparse
 import gzip
 
 def get_args():
-    parser = argparse.ArgumentParser(description="Classify coding transcripts by UTR completeness and retain all coding models for overlap processing.")
+    parser = argparse.ArgumentParser(description="Classify coding transcripts by UTR completeness; partials are separate protection context.")
     parser.add_argument("input_file", help="Path to the input GFF file")
     parser.add_argument("output_prefix", help="Path to the output GFF file", default="filtered")
     return parser.parse_args()
@@ -74,8 +74,8 @@ def main():
     # Filter the GFF file for partial transcripts
     filter_gff(input_file, output_file.replace(".gff", "_PT.gff"), partial_transcripts_ids)
 
-    # Partials take part in the normal overlap decisions, but are excluded when
-    # the final extended annotation and statistics are written.
+    # Retain the combined file for reference/compatibility only. The workflow
+    # uses FT for endpoint generation and PT separately for added protection.
     filter_gff(input_file, output_file.replace(".gff", "_PC.gff"), coding_transcript_ids)
     
     # Filter the GFF file for non-protein coding transcripts

@@ -27,17 +27,17 @@ workflow PROCESS_ANNOTATION {
     reads_sample_sheet
     
     main:
-    // Get and classify the annotation; retain partial coding models as overlap context.
+    // Classify annotation without letting partials supply extension endpoints.
     GET_CURRENT_ANNOTATION(reads_sample_sheet.splitCsv(header: true))
 
     // Keep full-length/partial classifications for final-output eligibility.
     FILTER_PARTIAL_TRANSCRIPTS(GET_CURRENT_ANNOTATION.out.current_annotation_by_chromosome)
 
     // Split the current annotation based on multi-exon and single-exon transcripts
-    SPLIT_TRANSCRIPTS_BASED_ON_EXON_NUMBER(FILTER_PARTIAL_TRANSCRIPTS.out.current_annotation_coding)
+    SPLIT_TRANSCRIPTS_BASED_ON_EXON_NUMBER(FILTER_PARTIAL_TRANSCRIPTS.out.current_annotation_ft)
 
     // Split by strand
-    SPLIT_CURRENT_ANNOTATION_BY_STRAND(SPLIT_TRANSCRIPTS_BASED_ON_EXON_NUMBER.out.multi_exon_coding_transcripts, "gff")
+    SPLIT_CURRENT_ANNOTATION_BY_STRAND(SPLIT_TRANSCRIPTS_BASED_ON_EXON_NUMBER.out.multi_exon_full_length_transcripts, "gff")
 
     // Extract first and last exon 
     EXTRACT_FIRST_AND_LAST_EXONS(SPLIT_CURRENT_ANNOTATION_BY_STRAND.out.positive_annotation.mix(SPLIT_CURRENT_ANNOTATION_BY_STRAND.out.negative_annotation))

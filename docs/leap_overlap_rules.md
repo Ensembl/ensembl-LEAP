@@ -4,6 +4,13 @@
 
 The sole deliberate extra overlap restriction is the within-gene partial-CDS check. It retains the existing shared-splice and validated annotation-support allowances, and keeps the seven known processed partial-CDS findings as failures. CSV rows identify it with `check_rule=within_gene_partial_cds` and `intentional_partial_cds_check=true`. The console separates `leap_rule_failures` from `partial_cds_failures`.
 
+This document maps the original full-length selection predicates. Production now
+also applies a protection-only partial-reference stage after that selection;
+see [partial protection](partial_transcript_processing.md). It cannot create or
+lengthen endpoints. The independent datacheck is unchanged and its per-isoform
+partial-CDS rule can still flag grouped annotation unification. The
+`partial_protection/` audit records the new production restrictions.
+
 ## Production sources
 
 | Datacheck decision | LEAP reference |
@@ -23,6 +30,9 @@ Clipping and terminal safety are independent. Annotation support bypasses clippi
 ## Original context and processed output
 
 `--leap-output-dir` must refer to the original run. Its `natural_overlaps/` and `fixed_extensions/` provide ordered groups, natural pairs, grouped original boundaries and candidate support. Missing or ambiguous required context is an error. The current GFF determines terminal geometry, so reverted internal extensions are not reinstated. Use corrected processed stats with processed GFFs.
+
+For protection-only runs, use the run root containing final protected
+`fixed_extensions/`, not `fixed_extensions_before_partial_protection/`.
 
 A shorter isoform can gain bases already present in the grouped raw annotation. Those bases are outside LEAP's read-extension clipping guard, even when the final candidate is labelled read-supported. This is different from newly extending beyond the grouped raw boundary into protected sequence. An existing overlapping gene span alone never bypasses the terminal-safety predicate.
 

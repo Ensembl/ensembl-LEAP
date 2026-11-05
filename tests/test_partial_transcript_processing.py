@@ -1,4 +1,4 @@
-"""Exercise the production scripts with partial models retained until output."""
+"""Exercise classification and final-output exclusion of partial models."""
 import csv
 import gzip
 import importlib.util
@@ -154,7 +154,7 @@ class PartialProcessingTests(unittest.TestCase):
                 coords = {(int(r.start), int(r.end)) for frame in [left,right] for r in frame.itertuples()}
                 self.assertTrue({(100,150),(500,550)} <= coords)
 
-    def test_distinct_partial_cds_updates_existing_single_cds_gene_classification(self):
+    def test_combining_partials_would_change_single_cds_classification(self):
         spec = importlib.util.spec_from_file_location('production_cds', BIN/'stop_cds_overlap.py')
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
@@ -230,19 +230,21 @@ class PartialProcessingTests(unittest.TestCase):
             self.assertEqual(result.returncode,2)
 
     @unittest.skipUnless(shutil.which('bedtools'), 'requires production bedtools executable')
-    def test_partial_terminals_and_single_exons_reach_existing_overlap_processing(self):
+    def test_partial_models_do_not_enter_original_endpoint_processing(self):
         with tempfile.TemporaryDirectory() as tmp:
             p=Path(tmp)
             partial=model('partial.1','B',exons=((140,180),(300,350)),cds=((150,170),),five=False,three=False)
             single=model('single.1','A',exons=((205,225),),cds=((210,220),),five=False,three=False)
             files=self.classify(p,model('full.1')+partial+single)
-            self.run_script(p,'extract_single_exons.py',files['PC'],'1',p/'annotation_PC')
-            multi=p/'annotation_PC_M.gff3';self.assertIn('partial.1',multi.read_text())
-            self.assertIn('single.1',(p/'annotation_PC_S.gff3').read_text())
-            self.assertIn('single_exon',(p/'1_positive_SE.bed').read_text())
+            self.run_script(p,'extract_single_exons.py',files['FT'],'1',p/'annotation_FT')
+            multi=p/'annotation_FT_M.gff3';self.assertNotIn('partial.1',multi.read_text())
+            self.assertNotIn('single.1',(p/'annotation_FT_S.gff3').read_text())
+            self.assertEqual((p/'1_positive_SE.bed').read_text(),'')
+            self.assertIn('partial.1',files['PT'].read_text())
+            self.assertIn('single.1',files['PT'].read_text())
             self.run_script(p,'extract_first_and_last_exon.py',multi,p/'annotation_1_positive')
-            self.assertIn('partial.1',(p/'annotation_1_positive_FE.gff').read_text())
-            self.assertIn('partial.1',(p/'annotation_1_positive_LE.gff').read_text())
+            self.assertNotIn('partial.1',(p/'annotation_1_positive_FE.gff').read_text())
+            self.assertNotIn('partial.1',(p/'annotation_1_positive_LE.gff').read_text())
 
     @unittest.skipUnless(shutil.which('bedtools'), 'requires production bedtools executable')
     def test_partial_single_exon_without_cds_blocks_an_unknown_terminal_contact(self):
@@ -282,22 +284,22 @@ class PartialProcessingTests(unittest.TestCase):
             self.assertEqual((p/'unsafe.bed').read_text(),'')
             self.assertTrue((p/'safe_FEC.bed').read_text())
 
-    def test_partial_annotation_participates_in_shared_splice_site_unification(self):
+    def test_partial_annotation_does_not_supply_a_shared_splice_endpoint(self):
         with tempfile.TemporaryDirectory() as tmp:
             p=Path(tmp)
             partial=model('partial.1',exons=((100,250),(400,450)),five=False)
             files=self.classify(p,model('full.1')+partial)
-            self.run_script(p,'extract_first_and_last_exon.py',files['PC'],p/'annotation_1_positive')
+            self.run_script(p,'extract_first_and_last_exon.py',files['FT'],p/'annotation_1_positive')
             self.run_script(p,'extract_unique_splice_sites_from_current_annotation.py',p/'annotation_1_positive_FE.gff',p/'annotation_1_positive_FE')
             rows=list(csv.DictReader((p/'annotation_1_positive_FE_USS.csv').read_text().splitlines()))
-            self.assertEqual([(r['splice_id'],r['non_splice_site']) for r in rows],[('1_250_+','100')])
+            self.assertEqual([(r['splice_id'],r['non_splice_site']) for r in rows],[('1_250_+','200')])
             fe,le=self.candidates(p)
-            fe.write_text('1\t100\t250\t.\t0\t+\t.\t.\t0\tA\n')
-            gff,stats=self.build(p,files['PC'],files['PT'],fe,le)
+            fe.write_text('1\t200\t250\t.\t0\t+\t.\t.\t0\tA\n')
+            gff,stats=self.build(p,files['FT'],files['PT'],fe,le)
             self.assertNotIn('partial.1',gff.read_text())
             row=list(csv.DictReader(stats.read_text().splitlines(),delimiter='\t'))[0]
-            self.assertEqual(row['five_prime_extension'],'100')
-            self.assertEqual(row['five_prime_support'],'current_annotation')
+            self.assertEqual(row['five_prime_extension'],'0')
+            self.assertEqual(row['five_prime_support'],'none')
 
 
 if __name__ == '__main__':

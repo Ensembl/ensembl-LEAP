@@ -13,7 +13,7 @@ def get_args():
     parser.add_argument("output_gff", type=str, help="Output GFF file with extended annotations.")
     parser.add_argument("output_stats", type=str, help="Output file for extension statistics.")
     parser.add_argument("--partial-annotation", required=True,
-                        help="Classified partial GFF; its models participate in overlap processing but are omitted from final GFF and stats. May be empty.")
+                        help="Protection-only partial GFF; its models are omitted from final GFF and stats. May be empty.")
     return parser.parse_args()
 
 def open_file(file_path):

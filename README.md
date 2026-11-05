@@ -177,8 +177,8 @@ Defined in [subworkflows/local/process_annotation/main.nf](/Users/rmerritt/my_ap
 1. Retrieve current annotation per chromosome from the configured database.
 2. Remove readthrough genes and OTT IDs during annotation retrieval.
 3. Build transcript lists that should not be extended.
-4. Classify full-length and partial coding transcripts, retaining both for overlap processing.
-5. Split the combined coding annotation into multi-exon and single-exon transcripts.
+4. Classify full-length and partial coding transcripts, keeping partials separately for protection.
+5. Split the original full-length annotation into multi-exon and single-exon transcripts.
 6. Split current annotation by strand.
 7. Extract first and last exons from current annotation.
 8. Identify natural overlaps in current annotation.
@@ -196,26 +196,29 @@ Defined in [subworkflows/local/overlap_reads/main.nf](/Users/rmerritt/my_app/LEA
 6. Intersect first-exon and last-exon extensions.
 7. Check extension safety against natural overlaps.
 8. Fix unsafe overlaps.
-9. Build final extended transcript GFF files and per-chromosome statistics, excluding partial transcript models.
+9. Restrict already selected read extensions against partial reference models.
+10. Build final extended transcript GFF files and per-chromosome statistics, excluding partial transcript models.
 
-Partial coding models remain in the intermediate annotation so their CDS, unique
-exons, terminal exons and single-exon features participate in the existing LEAP
-overlap and natural-overlap decisions. They also participate in annotation-based
-grouping at shared splice sites. The overlap predicates, shorter-candidate
-selection and annotation fallback are unchanged. Only full-length multi-exon
-models are emitted in the final extended GFF and extension stats, matching the
-previous output eligibility.
+Partial models are protection context only. Endpoint generation, shared-splice
+annotation boundaries, gene groups, natural-overlap pairs and the original
+single-CDS-gene eligibility use the original full-length reference. After normal
+overlap fixing, partial CDS and applicable exon protections can shorten a
+read-supported endpoint or restore its original annotation fallback. They cannot
+create endpoints, lengthen a selected extension or free space for another end
+to grow. Existing annotation-only extensions are preserved. Only full-length
+multi-exon models are emitted, matching the original output eligibility.
 
 `filter_out_partials.py` retains its `_FT.gff`, `_PT.gff` and `_NPC.gff` outputs
 and additionally writes `_PC.gff`, containing both full-length and partial
-protein-coding models. Nextflow uses `_PC.gff` for the normal processing stages
-and passes `_PT.gff` to the final writer. Direct calls to
+protein-coding models, for reference/compatibility only. Nextflow uses `_FT.gff`
+for normal processing and passes `_PT.gff` separately to
+`protect_partial_extensions.py` and the final writer. Direct calls to
 `build_chromosome_gff_and_stats.py` now require `--partial-annotation <PT.gff>`;
 an empty file is valid when no partials exist. Partial IDs are matched exactly,
 including version, chromosome and strand. All records belonging to those models
 are omitted before applying extensions, so they cannot contribute stats or final
 gene boundaries. See [partial-transcript processing](docs/partial_transcript_processing.md)
-for testing and replay limitations.
+for the protection contract, command, tests and chromosome 12 validation.
 
 A more detailed workflow diagram is available in [BIOINFORMATICS_FLOWCHART.md](/Users/rmerritt/my_app/LEAP/BIOINFORMATICS_FLOWCHART.md).
 
@@ -229,7 +232,9 @@ Selected outputs are published under `params.output_directory`.
 | `natural_overlaps/` | Existing annotation overlaps that are treated as natural/known overlaps. |
 | `extension_safety/` | Safety-check outputs, including safe and unsafe extension BED files. |
 | `unsafe_overlaps/` | Rejected unsafe overlaps, named like `<chromosome>_<strand>_rejected.bed`. |
-| `fixed_extensions/` | First-exon and last-exon BED files after unsafe-overlap fixing. |
+| `fixed_extensions_before_partial_protection/` | Original selected first/last-exon candidates before the added partial checks. |
+| `fixed_extensions/` | Final first/last-exon candidates after protection; these correspond to the final GFF and stats. |
+| `partial_protection/` | TSV audit of shortened candidates, original endpoints, annotation fallback and blocking partial features. |
 | `extended_transcripts/` | Final per-chromosome extended transcript GFF files. |
 | `extended_transcripts_stats/` | Per-chromosome TSV statistics for the extended transcript output. |
 

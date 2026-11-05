@@ -72,7 +72,7 @@ workflow OVERLAP_READS {
     FIX_UNSAFE_OVERLAPS(CHECK_EXTENSION_SAFETY.out.safety_checked_extensions)
 
     // Create the extensions gff per chromosome with stats
-    EXTEND_TRANSCRIPTS(FIX_UNSAFE_OVERLAPS.out.fixed_extensions.join(stranded_annotation).join(blacklist_transcripts).join(partial_annotation))
+    EXTEND_TRANSCRIPTS(FIX_UNSAFE_OVERLAPS.out.fixed_extensions.join(stranded_annotation).join(blacklist_transcripts).join(partial_annotation).join(natural_overlaps))
 
     emit:
     EXTEND_TRANSCRIPTS.out.extended_transcripts
