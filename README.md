@@ -1,7 +1,7 @@
 # LEAP
 
 [![Nextflow](https://img.shields.io/badge/nextflow-%E2%89%A523.04.0-23aa8c.svg)](https://www.nextflow.io/)
-[![Python](https://img.shields.io/badge/python-%E2%89%A53.7-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-%E2%89%A53.10-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Run with conda](https://img.shields.io/badge/run%20with-conda-3EB049?labelColor=000000&logo=anaconda)](https://docs.conda.io/en/latest/)
 [![Run with singularity](https://img.shields.io/badge/run%20with-singularity-1d355c.svg?labelColor=000000)](https://sylabs.io/docs/)
 
@@ -22,6 +22,7 @@ The pipeline is organised around chromosome- and strand-aware processing so larg
 - [Configuration](#configuration)
 - [Development Notes](#development-notes)
 - [Automatic datachecks](#automatic-datachecks)
+- [Manual reviewer preparation](#manual-reviewer-preparation)
 - [License](#license)
 
 ## What LEAP Does
@@ -41,8 +42,8 @@ The pipeline is organised around chromosome- and strand-aware processing so larg
 - Linux or HPC execution environment
 - Singularity/Apptainer or Conda
 - Python 3 with `pandas`, `numpy`, and `matplotlib` available to helper scripts
-- Perl and MySQL client tools for annotation database access
-- Access to an annotation database compatible with `bin/db2gxf.pl`
+- Python 3.10+ with SQLAlchemy 2 and PyMySQL 1 for annotation database access
+- Access to an Ensembl-style annotation database compatible with the bundled Python exporter
 
 Several modules declare Biocontainers images for tools such as `samtools`, `bedtools`, `bedToGenePred`, and `genePredToGtf`. The default config enables both Singularity and Conda:
 
@@ -50,6 +51,8 @@ Several modules declare Biocontainers images for tools such as `samtools`, `bedt
 singularity.enabled = true
 conda.enabled = true
 ```
+
+See [the exporter migration guide](docs/db2gxf_upgrade.md) for JSON setup, bundled exporter provenance, runtime requirements and chromosome 21 validation. The old `--host`, `--port`, `--user`, `--pass` and `--dbname` parameters have been replaced by `--db_secrets`.
 
 ## Inputs
 
@@ -59,7 +62,7 @@ LEAP expects:
 - A BAM index file (`.bai` or `.csi`).
 - CAGE peaks in BED-like format for 5' validation.
 - polyA sites in BED-like format for 3' validation.
-- Database connection details for the current annotation source.
+- A database connection JSON file for the current annotation source (`--db_secrets`).
 - An output directory for published results.
 - A species-matched FASTA `.fai` or chromosome-length file for automatic datachecks, with exact annotation sequence names.
 
@@ -83,11 +86,7 @@ params {
     overlap_penalty = 10
     extend_on_current_annotation = true
 
-    host = "database.host"
-    port = 3306
-    user = "username"
-    pass = "password"
-    dbname = "annotation_database"
+    db_secrets = "/private/path/db_secrets.json"
 }
 ```
 
@@ -122,11 +121,7 @@ nextflow run main.nf \
   --minimum_read_support 2 \
   --overlap_penalty 10 \
   --extend_on_current_annotation true \
-  --host database.host \
-  --port 3306 \
-  --user username \
-  --pass password \
-  --dbname annotation_database \
+  --db_secrets /private/path/db_secrets.json \
   -profile hpc_slurm
 ```
 
@@ -139,16 +134,12 @@ nextflow run main.nf \
 | `cage` | Yes | CAGE validation data. Used for first-exon/5' extension support. |
 | `polya` | Yes | polyA validation data. Used for last-exon/3' extension support. |
 | `output_directory` | Yes | Directory where selected pipeline outputs are published. |
-| `run_datachecks` | No | Run all nine validation modules automatically; default `true`. |
+| `run_datachecks` | No | Run all ten validation modules automatically; default `true`. |
 | `datacheck_reference_lengths` | When checks enabled | Matching FASTA `.fai` or two-column chromosome-length file; exact sequence names required. |
 | `minimum_read_support` | Yes | Minimum read support passed to read unique-splice-site extraction. |
 | `overlap_penalty` | Yes | Alpha/penalty value passed to unsafe-overlap fixing. |
 | `extend_on_current_annotation` | Yes | Controls whether candidate read extensions may be matched against current annotation. |
-| `host` | Yes | Annotation database host. |
-| `port` | Yes | Annotation database port. |
-| `user` | Yes | Annotation database user. |
-| `pass` | Yes | Annotation database password. |
-| `dbname` | Yes | Annotation database name. |
+| `db_secrets` | Yes | Connection JSON: host, port, user, database and password; see the example and migration guide. |
 | `sample_sheet` | No | Present in `params.config`, but not currently consumed by `main.nf`. |
 
 `params.config` contains empty placeholders. Set values before running, either in that file or with `--parameter value` overrides.
@@ -260,7 +251,7 @@ LEAP/
 │   └── ebi_slurm.config
 ├── bin/
 │   ├── get_current_annotation.sh
-│   ├── db2gxf.pl
+│   ├── gxf_dump.py
 │   └── *.py
 ├── assets/
 │   └── *.py
@@ -289,20 +280,21 @@ The [conf/ebi_slurm.config](/Users/rmerritt/my_app/LEAP/conf/ebi_slurm.config) p
 
 ## Automatic datachecks
 
-All nine datachecks now run automatically on standard LEAP outputs. Supply the matching reference lengths when launching LEAP:
+All ten datachecks now run automatically on standard LEAP outputs. Supply the matching reference lengths when launching LEAP:
 
 ```bash
 nextflow run main.nf -profile hpc_slurm \
+  --db_secrets /private/path/db_secrets.json \
   --datacheck_reference_lengths /path/to/matching_reference.fa.fai
 ```
 
 A two-column chromosome-length file is also accepted, including gzip. Names must match exactly: `1` and `chr1` are distinct. The reference parameter is required while checks are enabled and is validated before production tasks are submitted. Set `--run_datachecks false` only to explicitly disable automatic validation; the default is `true`.
 
-Each chromosome/strand gets separate boundary, internal-exon, complete-preservation, stats/GFF, structural-integrity, completeness, partial-protection, reference-coordinate and CDS/UTR-overlap tasks. Inputs come directly from declared workflow channels, independently of asynchronous published copies. Expected partitions come from the chromosomes selected from the read BAM, with both strands required. Missing output partitions therefore reach completeness rather than disappearing through joins.
+Each chromosome/strand gets separate boundary, internal-exon, complete-preservation, stats/GFF, structural-integrity, completeness, partial-protection, reference-coordinate, CDS/UTR-overlap and duplicate-recommendation tasks. Inputs come directly from declared workflow channels, independently of asynchronous published copies. Expected partitions come from the chromosomes selected from the read BAM, with both strands required. Missing output partitions therefore reach completeness rather than disappearing through joins.
 
-Results are saved under `datachecks/<chromosome>_<strand>_<check>/`: `report.csv`, `stdout.txt`, `stderr.txt` and a uniquely named `.status.json`. The combined `datachecks/summary/summary.html`, `summary.csv` and `summary.json` distinguish `PASS`, `FAIL`, `INPUT_ERROR` and `NOT_APPLICABLE`. All checks finish and their reports and summary are published before the final gate marks LEAP as failed. Input errors remain distinct from biological failures. Missing/duplicate/unexpected result records and unexpected workflow scopes also fail validation. Partial-CDS contacts within verified original grouped annotation boundaries are reported as allowed; new read-driven contacts beyond those boundaries remain failures unless an existing explicit allowance applies.
+Results are saved under `datachecks/<chromosome>_<strand>_<check>/`: `report.csv`, `stdout.txt`, `stderr.txt` and a uniquely named `.status.json`. The combined `datachecks/summary/summary.html`, `summary.csv` and `summary.json` distinguish `PASS`, `FAIL`, `INPUT_ERROR`, `NOT_APPLICABLE` and non-failing `REVIEW`. All checks finish and their reports and summary are published before the final gate marks LEAP as failed. Input errors remain distinct from biological failures. Missing/duplicate/unexpected result records and unexpected workflow scopes also fail validation. Partial-CDS contacts within verified original grouped annotation boundaries are reported as allowed; new read-driven contacts beyond those boundaries remain failures unless an existing explicit allowance applies.
 
-For valid empty partitions, completeness and the partial-protection and reference checks still run. Comparison/structural checks are marked `NOT_APPLICABLE` only after a scoped completeness preflight confirms zero eligible transcripts, empty final GFF and no stats models. Missing eligible output or malformed inputs are never hidden as an empty-partition pass. The reference check covers both the published raw annotation and final GFF. The stats/GFF check always receives selected-candidate provenance. Internal-extension processing remains standalone; the automatic suite checks the standard LEAP output stage.
+For valid empty partitions, completeness, partial protection, reference coordinates and duplicate recommendations still run. Comparison/structural checks are marked `NOT_APPLICABLE` only after a scoped completeness preflight confirms zero eligible transcripts, empty final GFF and no stats models. Missing eligible output or malformed inputs are never hidden as an empty-partition pass. The reference check covers both the published raw annotation and final GFF. The stats/GFF check always receives selected-candidate provenance. Internal-extension processing remains standalone; the automatic suite checks the standard LEAP output stage.
 
 The new modules require only Python 3 on the execution environment. Annotation, evidence and extension-selection logic are unchanged. Existing standalone commands below remain available. See [the integration guide](docs/datachecks.md) for workflow wiring, output meanings and real Nextflow smoke tests.
 
@@ -338,10 +330,18 @@ The console reports status counts, independent failure-flag counts and the numbe
 
 Run both datachecks' automated tests with `python3 -m unittest discover -s tests`.
 
-## Duplicate transcript datacheck (standalone)
+## Manual reviewer preparation
+
+LEAP now prepares `manual_review/` automatically, with raw, original LEAP, processed external and original internal-candidate annotations. Each group has positive, negative and unsplit GFF3 views across the selected chromosomes. Internal tracks show what the models would look like if their internal extensions were retained; external tracks restore those ends using the existing processor. The bundle includes HAVANA JBrowser samplesheets, metadata, corrected external stats/classifications and editable `run_jbrowser.sbatch` (public FTP) and `run_jbrowser_offline.sbatch` launchers. The offline launcher refreshes a separate samplesheet with every row marked offline, using the shared reference/path settings, and needs no FTP settings. The final datacheck gate waits for this bundle.
+
+Supply `--review_reference /server/reference/genome.fa` (or a gzipped FASTA/2bit), alongside the matching `--datacheck_reference_lengths`. Set `--review_jbrowser_pipeline`, `--review_public_base_url`, `--review_ftp_target_dir` and `--review_hub_email` to prefill server settings; unknown settings remain editable. Use `--review_genome_id` and `--review_species` for explicit assembly/species names. Disable preparation with `--prepare_manual_review false`. LEAP generates the launch files; submission and FTP publishing remain manual.
+
+See [manual review preparation](docs/manual_review.md) for the 12 views, launch commands and preparing an existing run without rerunning LEAP.
+
+## Duplicate transcript recommendations
 
 ```bash
-python3 assets/check_duplicate_transcripts.py /path/to/run/extended_transcripts duplicate_transcripts.csv
+python3 assets/check_duplicate_transcripts.py /path/to/run/extended_transcripts duplicate_transcripts.csv --recommend-removals
 # A single plain or gzipped GFF/GFF3 file is also accepted.
 ```
 
@@ -349,9 +349,11 @@ Different exact `transcript_id` values are grouped when their chromosome, strand
 
 The CSV contains only duplicate groups, with one row per member. Filter `group_id` to find all members of a group. Each row includes group size, exact versioned transcript ID, gene identifiers/names, chromosome/strand, transcript bounds, ordered exon and CDS lists, CDS phases, inclusive spliced/CDS lengths, source file and transcript line, and a `jbrowse_label` in `chromosome:start-end` format. Group labels depend on structure and stay stable across input ordering and subset reports. The console counts groups, transcripts belonging to groups, extra members beyond one per group (`redundant_transcripts`) and transcripts outside groups (`unique_transcripts`).
 
-Directory mode checks all immediate `.gff`, `.gff3` and gzip equivalents together. Ambiguous plain/gzip copies, repeated transcript records (including across files on the same chromosome), malformed records, missing IDs, orphan exon/CDS records, exonless transcripts, overlapping/duplicate exon or CDS intervals, inconsistent locations/gene IDs, transcript bounds inconsistent with exon spans and CDS outside exons are input errors. Children may precede transcripts. Empty/header-only files are accepted. Inputs are validated before opening the report, and overwrite protection covers symbolic and hard links. Exit codes are `0` for no duplicate groups, `1` for duplicate groups found, and `2` for input/execution errors. Duplicate findings are for review; this standalone check is not yet part of the nine automatic modules.
+Directory mode checks all immediate `.gff`, `.gff3` and gzip equivalents together. Ambiguous plain/gzip copies, repeated transcript records (including across files on the same chromosome), malformed records, missing IDs, orphan exon/CDS records, exonless transcripts, overlapping/duplicate exon or CDS intervals, inconsistent locations/gene IDs, transcript bounds inconsistent with exon spans and CDS outside exons are input errors. Children may precede transcripts. Empty/header-only files are accepted. Inputs are validated before opening the report, and overwrite protection covers symbolic and hard links. Exit codes are `0` for no duplicate groups, `1` for duplicate groups found, and `2` for input/execution errors. The tenth automatic module enables recommendation mode and records duplicate findings as non-failing `REVIEW`; malformed inputs still fail validation. Without `--recommend-removals`, the standalone command retains detection-only behaviour.
 
-Run focused tests with `python3 -m unittest discover -s tests -p test_check_duplicate_transcripts.py`.
+Recommendation mode keeps every MANE Select/Plus Clinical member. Otherwise it prefers non-canonical models when available, then models carrying `LEAP_blacklisted` or the original upstream-ATG/CAGE-supported-TSS/RP-supported-TIS tags, then the lowest numeric stable ID. Canonical-only groups retain one representative. The same priorities apply across genes; chromosome and strand still separate groups. Dates and transcript versions never break ties. Unreadable or tied numeric IDs produce manual-review candidates. CSV fields include observed tags, classification, `keep`/`remove_from_gff`/`review`, reasons, retained member IDs and a cross-gene flag. Recommendations apply to LEAP GFF entries only and do not edit GFFs or databases. Historical files lacking MANE metadata cannot support reliable MANE-priority decisions.
+
+Run focused tests with `python3 -m unittest discover -s tests -p 'test_*duplicate*.py'`.
 
 The standalone [annotation uploader](assets/update_LEAPed_annotation.pl) now reuses matching database models tagged `Ensembl_canonical_extended` when processing MANE extensions. An existing model already covering the requested ends is left intact; a shorter matching model is extended in place, keeping the farther endpoint at each end. The uploader creates a copy only when no matching canonical extended model exists. See [uploading LEAP annotations](docs/uploading_leap_annotations.md) for matching rules, dry-run usage and test limitations. Uploading remains separate from the pipeline and datachecks.
 

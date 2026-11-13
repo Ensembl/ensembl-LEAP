@@ -33,7 +33,7 @@ class DatacheckAdapterTests(unittest.TestCase):
         status = json.loads((output/('1_'+strand+'_'+name+'.status.json')).read_text())
         return status,output
 
-    def test_all_nine_checks_both_strands(self):
+    def test_all_ten_checks_both_strands(self):
         for strand in ('positive','negative'):
             for name in RUNNER.CHECKS:
                 with self.subTest(strand=strand,check=name):
@@ -108,7 +108,7 @@ class DatacheckAdapterTests(unittest.TestCase):
         statuses[0].update(status='FAIL',exit_code=1,message='<script>unsafe</script>')
         summary,output = self.summary(statuses)
         self.assertEqual(summary['exit_code'],1)
-        self.assertEqual(summary['counts'],{'FAIL':1,'PASS':8})
+        self.assertEqual(summary['counts'],{'FAIL':1,'PASS':9})
         self.assertIn('&lt;script&gt;', (output/'summary.html').read_text())
         self.assertNotIn('<script>', (output/'summary.html').read_text())
         result = subprocess.run([sys.executable,str(SCRIPT),'gate','--verdict',str(output/'verdict.json')],cwd=self.root,capture_output=True,text=True)
@@ -134,3 +134,35 @@ class DatacheckAdapterTests(unittest.TestCase):
         self.assertEqual(summary['exit_code'],2)
         summary,_ = self.summary(statuses,issues=['Unexpected final output chromosome 2'])
         self.assertEqual(summary['exit_code'],2)
+
+    def test_duplicate_findings_are_review_and_do_not_fail_gate(self):
+        path=self.context/'extended_transcripts/1_positive_extended.gff'
+        original=path.read_text()
+        copied=''.join(line.replace('t_plus.1','t_copy.1') for line in original.splitlines(True) if '\tgene\t' not in line)
+        path.write_text(original+copied)
+        status, output=self.run_check('duplicate_transcripts')
+        self.assertEqual(status['status'],'REVIEW',status)
+        self.assertEqual(status['exit_code'],0)
+        self.assertEqual(status['checker_exit_code'],1)
+        statuses=self.valid_statuses()
+        statuses=[status if row['check']=='duplicate_transcripts' else row for row in statuses]
+        summary,folder=self.summary(statuses)
+        self.assertEqual(summary['status'],'REVIEW')
+        self.assertEqual(summary['exit_code'],0)
+        result=subprocess.run([sys.executable,str(SCRIPT),'gate','--verdict',str(folder/'verdict.json')],cwd=self.root,capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertIn('require review',result.stdout)
+        # REVIEW cannot disguise a failure in another datacheck.
+        statuses[0].update(status='REVIEW',exit_code=0,checker_exit_code=1)
+        summary,_=self.summary(statuses)
+        self.assertEqual(summary['exit_code'],2)
+
+    def test_duplicate_input_error_and_missing_report_are_errors(self):
+        path=self.context/'extended_transcripts/1_positive_extended.gff'
+        path.write_text('malformed GFF\n')
+        status,_=self.run_check('duplicate_transcripts')
+        self.assertEqual(status['status'],'INPUT_ERROR')
+        checkers=self.root/'duplicate-checkers';checkers.mkdir()
+        (checkers/RUNNER.CHECKS['duplicate_transcripts']).write_text('import sys;sys.exit(1)\n')
+        status,_=self.run_check('duplicate_transcripts',checkers=checkers)
+        self.assertEqual(status['status'],'INPUT_ERROR')

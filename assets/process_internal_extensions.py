@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Restore internal terminal-exon extensions using LEAP2GO's CDS-extreme policy.
 
-Standalone LEAP asset; no Nextflow integration. Inputs are never modified.
+Standalone LEAP asset, also reused by manual-review modules. Inputs are never modified.
 """
 import argparse
 from collections import Counter

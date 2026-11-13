@@ -6,6 +6,7 @@ process DATACHECK_GATE {
     input:
     path verdict
     path runner, stageAs: 'helpers/*'
+    val review_ready
 
     output:
     path('datachecks.passed')

@@ -1,0 +1,7 @@
+name: leap-annotation
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - sqlalchemy>=2,<3
+  - pymysql>=1.1,<2

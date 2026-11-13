@@ -24,11 +24,12 @@ CHECKS = {
     'partial_protection': 'check_partial_protection.py',
     'reference_coordinates': 'check_reference_coordinates.py',
     'cds_overlaps': 'check_cds_overlaps.py',
+    'duplicate_transcripts': 'check_duplicate_transcripts.py',
 }
 LEGACY_EMPTY = {'boundary', 'internal_exons', 'preservation', 'stats_gff', 'structure', 'cds_overlaps'}
 SUMMARY_FIELDS = ['chromosome', 'strand', 'check', 'status', 'exit_code', 'message',
                   'report', 'stdout', 'stderr', 'elapsed_seconds']
-VALID_STATUSES = {0: {'PASS', 'NOT_APPLICABLE'}, 1: {'FAIL'}, 2: {'INPUT_ERROR'}}
+VALID_STATUSES = {0: {'PASS', 'NOT_APPLICABLE', 'REVIEW'}, 1: {'FAIL'}, 2: {'INPUT_ERROR'}}
 
 
 def safe_chromosome(value):
@@ -106,6 +107,9 @@ def run_check(args):
         elif args.check == 'partial_protection':
             command = [sys.executable, str(checker), str(context), str(report),
                        '--chromosomes', args.chromosome, '--strand', args.strand]
+        elif args.check == 'duplicate_transcripts':
+            extended = one_file(context / 'extended_transcripts', ('.gff', '.gff3', '.gff.gz', '.gff3.gz'), args.chromosome + '_' + args.strand + '_extended')
+            command = [sys.executable, str(checker), str(extended), str(report), '--recommend-removals']
         else:
             raw = one_file(context / 'raw_annotation', ('.gff', '.gff3', '.gff.gz', '.gff3.gz'), 'current_annotation_' + args.chromosome)
             extended = one_file(context / 'extended_transcripts', ('.gff', '.gff3', '.gff.gz', '.gff3.gz'), args.chromosome + '_' + args.strand + '_extended')
@@ -152,6 +156,8 @@ def run_check(args):
             code = result if result in (0, 1, 2) else 2
             status.update(checker_exit_code=result, exit_code=code,
                           status={0: 'PASS', 1: 'FAIL', 2: 'INPUT_ERROR'}[code])
+            if args.check == 'duplicate_transcripts' and code == 1:
+                status.update(status='REVIEW', exit_code=0)
             log = (stderr if code == 2 else stdout).read_text(errors='replace').strip()
             status['message'] = log.splitlines()[0][:2000] if log else 'Datacheck exited with code {}'.format(result)
     except Exception as error:
@@ -159,9 +165,9 @@ def run_check(args):
         status.update(status='INPUT_ERROR', exit_code=2, message=str(error))
         with stderr.open('a', encoding='utf-8') as handle:
             handle.write('ERROR: ' + str(error) + '\n')
-    if status['status'] in ('PASS', 'FAIL') and not report.is_file():
+    if status['status'] in ('PASS', 'FAIL', 'REVIEW') and not report.is_file():
         status.update(status='INPUT_ERROR', exit_code=2, message='Checker did not produce its required CSV report; see logs')
-    if status['exit_code'] and 'Traceback (most recent call last):' in stderr.read_text(errors='replace'):
+    if 'Traceback (most recent call last):' in stderr.read_text(errors='replace'):
         status.update(status='INPUT_ERROR', exit_code=2, message='Unexpected checker execution error; see stderr')
     if not report.exists():
         with report.open('w', newline='', encoding='utf-8') as handle:
@@ -204,6 +210,8 @@ def summarize(args):
             code = record['exit_code']
             if type(code) is not int or code not in VALID_STATUSES or record['status'] not in VALID_STATUSES[code]:
                 raise ValueError('Invalid exit code/status combination')
+            if record['status'] == 'REVIEW' and (record['check'] != 'duplicate_transcripts' or record.get('checker_exit_code') != 1):
+                raise ValueError('REVIEW is reserved for duplicate-transcript findings')
             if key not in expected:
                 raise ValueError('Unexpected result scope: ' + str(key))
             for field in ('report', 'stdout', 'stderr', 'message', 'elapsed_seconds'):
@@ -227,6 +235,8 @@ def summarize(args):
     verdict = dict(schema_version=1, status={0: 'PASS', 1: 'FAIL', 2: 'INPUT_ERROR'}[code], exit_code=code,
                    expected_checks=len(expected), received_status_files=sum(len(v) for v in records.values()),
                    counts=dict(counts), results=rows)
+    if code == 0 and counts['REVIEW']:
+        verdict['status'] = 'REVIEW'
     output.mkdir(parents=True)
     with (output / 'summary.csv').open('w', newline='', encoding='utf-8') as handle:
         writer = csv.DictWriter(handle, fieldnames=SUMMARY_FIELDS, extrasaction='ignore')
@@ -235,7 +245,7 @@ def summarize(args):
     (output / 'summary.json').write_text(json.dumps(verdict, indent=2) + '\n')
     (output / 'verdict.json').write_text(json.dumps({k: v for k, v in verdict.items() if k != 'results'}, indent=2) + '\n')
     page = ['<!doctype html><html lang="en"><meta charset="utf-8"><title>LEAP datachecks</title>',
-            '<style>body{font:16px system-ui;margin:32px;line-height:1.5}td,th{padding:8px;border-bottom:1px solid #ddd;text-align:left}.PASS{color:#08633c}.FAIL,.INPUT_ERROR{color:#a72020}td:last-child{max-width:750px;overflow-wrap:anywhere}</style>',
+            '<style>body{font:16px system-ui;margin:32px;line-height:1.5}td,th{padding:8px;border-bottom:1px solid #ddd;text-align:left}.PASS{color:#08633c}.REVIEW{color:#935d00}.FAIL,.INPUT_ERROR{color:#a72020}td:last-child{max-width:750px;overflow-wrap:anywhere}</style>',
             '<h1>LEAP datachecks: {}</h1><p>{} checks expected. {}</p>'.format(verdict['status'], len(expected), html.escape(str(dict(counts)))),
             '<p><a href="summary.csv">CSV summary</a> · <a href="summary.json">Full JSON summary</a></p>',
             '<table><tr><th>Chromosome</th><th>Strand</th><th>Check</th><th>Result</th><th>Files</th><th>Details</th></tr>']
@@ -265,8 +275,9 @@ def gate(args):
     if code:
         print('LEAP datachecks failed: {}. All check reports and the combined summary were retained.'.format(verdict['counts']), file=sys.stderr)
         return code
-    Path('datachecks.passed').write_text('All required datachecks passed or were explicitly not applicable.\n')
-    print('All LEAP datachecks passed.')
+    message = 'Required datachecks passed; duplicate-transcript recommendations require review.' if verdict.get('counts', {}).get('REVIEW') else 'All required datachecks passed or were explicitly not applicable.'
+    Path('datachecks.passed').write_text(message + '\n')
+    print(message)
     return 0
 
 

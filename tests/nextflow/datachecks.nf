@@ -30,5 +30,5 @@ workflow {
         [id.toString(), file("${root}/natural_overlaps/${id}_NO.txt", checkIfExists: true)]
     }
     reference = Channel.value(file("${root}/${params.reference_name}", checkIfExists: true))
-    DATACHECKS(scope, raw, final_outputs, selected, natural, reference)
+    DATACHECKS(scope, raw, final_outputs, selected, natural, reference, Channel.value(true))
 }

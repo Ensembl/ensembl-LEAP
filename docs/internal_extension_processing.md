@@ -1,6 +1,6 @@
 # Process internal extensions within LEAP
 
-`assets/process_internal_extensions.py` is a standalone LEAP asset based on LEAP2GO's `external_extensions.py`. It prepares for future Nextflow integration; it is not currently called by the LEAP workflow. LEAP2GO itself is unchanged.
+`assets/process_internal_extensions.py` is a standalone LEAP asset based on LEAP2GO's `external_extensions.py`. Its processing functions are also reused by LEAP's [manual review modules](manual_review.md) to produce external and internal review tracks. The original LEAP output remains unchanged. LEAP2GO itself is unchanged.
 
 ```bash
 python3 assets/process_internal_extensions.py /path/to/leap_run /path/to/new_processed_run

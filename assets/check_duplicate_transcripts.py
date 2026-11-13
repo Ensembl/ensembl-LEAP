@@ -12,13 +12,16 @@ import sys
 import zlib
 from collections import defaultdict
 from pathlib import Path
+from urllib.parse import unquote
 
 
 FIELDS = ['group_id', 'group_size', 'chromosome', 'start', 'end', 'strand',
           'transcript_id', 'gene_id', 'gene_name', 'transcript_name', 'gff_id',
           'exon_count', 'exon_coordinates', 'spliced_length', 'cds_count',
           'cds_coordinates', 'cds_phases', 'cds_length', 'jbrowse_label',
-          'source_path', 'transcript_line']
+          'source_path', 'transcript_line', 'observed_tags', 'observed_leap_tags',
+          'classification', 'is_mane', 'is_canonical_extended', 'is_blacklisted',
+          'recommendation', 'reason', 'retained_member_ids', 'cross_gene_group']
 
 
 def annotation_paths(source):
@@ -116,7 +119,8 @@ def read_annotation(path):
                              transcript_line=number, gene_id=attrs.get('gene_id', ''),
                              gene_name=attrs.get('gene_name', ''),
                              transcript_name=attrs.get('transcript_name', ''),
-                             gff_id=attrs.get('ID', ''))
+                             gff_id=attrs.get('ID', ''), tags=tag_values(attrs.get('tag', '')),
+                             leap_tags=tag_values(attrs.get('leap_tag', '')))
             else:
                 model['children'].append((start, end, attrs.get('gene_id', ''), context))
                 if f[2] == 'exon':
@@ -165,10 +169,71 @@ def duplicate_groups(paths):
     return duplicates, len(seen)
 
 
-def report_rows(groups):
+def tag_values(value):
+    # Split the GFF3 list before decoding escaped commas inside individual values.
+    return tuple(sorted({unquote(item).strip() for item in value.split(',') if item.strip()}))
+
+
+def tag_classification(model):
+    normalized = {re.sub(r'[ -]', '_', tag.casefold()) for tag in model['tags'] + model['leap_tags']}
+    mane = bool(normalized & {'mane_select', 'mane_plus_clinical'})
+    canonical = 'ensembl_canonical_extended' in normalized
+    blacklisted = bool(normalized & {'leap_blacklisted', 'upstream_atg', 'cage_supported_tss', 'rp_supported_tis'})
+    return dict(classification='mane' if mane else 'canonical_extended' if canonical else 'other',
+                is_mane=mane, is_canonical_extended=canonical, is_blacklisted=blacklisted)
+
+
+def numeric_stable_id(identifier):
+    match = re.fullmatch(r'[A-Za-z_]+([0-9]+)(?:\.[0-9]+)?(?:_PAR_Y)?', identifier)
+    return int(match[1]) if match else None
+
+
+def recommendations(members):
+    classes = {m['transcript_id']: tag_classification(m) for m in members}
+    candidates = {m['transcript_id'] for m in members}
+    result = {}
+    mane = {tid for tid in candidates if classes[tid]['is_mane']}
+    if mane:
+        return {tid: ('keep', 'protected_MANE') if tid in mane else
+                ('remove_from_gff', 'MANE_member_preferred') for tid in candidates}
+    noncanonical = {tid for tid in candidates if not classes[tid]['is_canonical_extended']}
+    canonical_only = not noncanonical
+    if noncanonical:
+        for tid in candidates - noncanonical:
+            result[tid] = ('remove_from_gff', 'noncanonical_member_preferred')
+        candidates = noncanonical
+    blacklisted = {tid for tid in candidates if classes[tid]['is_blacklisted']}
+    if blacklisted:
+        for tid in candidates - blacklisted:
+            result[tid] = ('remove_from_gff', 'blacklisted_member_preferred')
+        candidates = blacklisted
+    if len(candidates) == 1:
+        winner = next(iter(candidates))
+        result[winner] = ('keep', 'only_remaining_candidate')
+    else:
+        numbers = {tid: numeric_stable_id(tid) for tid in candidates}
+        lowest = min((v for v in numbers.values() if v is not None), default=None)
+        winners = {tid for tid, value in numbers.items() if value == lowest}
+        if None in numbers.values() or len(winners) != 1:
+            for tid in candidates:
+                result[tid] = ('review', 'numeric_stable_id_cannot_resolve_candidates')
+        else:
+            winner = next(iter(winners))
+            for tid in candidates:
+                result[tid] = ('keep', 'lowest_numeric_stable_id') if tid == winner else (
+                    'remove_from_gff', 'lower_numeric_stable_id_preferred')
+    if canonical_only:
+        result = {tid: (action, 'canonical_only_group:' + reason) for tid, (action, reason) in result.items()}
+    return result
+
+
+def report_rows(groups, recommend=False):
     for key, members in groups:
         # The label stays the same across reordered files and subset reports.
         group_id = 'DUP_' + hashlib.sha256(json.dumps(key, separators=(',', ':')).encode()).hexdigest()[:20]
+        decisions = recommendations(members) if recommend else {}
+        retained = ';'.join(sorted(tid for tid, (action, reason) in decisions.items() if action == 'keep'))
+        cross_gene = len({m['gene_id'] for m in members}) > 1
         for model in sorted(members, key=lambda item: item['transcript_id']):
             exons, cds = model['exons'], model['cds']
             start, end = model['record']
@@ -181,6 +246,10 @@ def report_rows(groups):
                        cds_phases=';'.join(c[2] for c in cds),
                        cds_length=sum(right - left + 1 for left, right, phase in cds),
                        jbrowse_label='{}:{}-{}'.format(model['chromosome'], start, end))
+            action, reason = decisions.get(model['transcript_id'], ('', ''))
+            row.update(tag_classification(model), observed_tags=';'.join(model['tags']),
+                       observed_leap_tags=';'.join(model['leap_tags']), recommendation=action,
+                       reason=reason, retained_member_ids=retained, cross_gene_group=cross_gene)
             yield row
 
 
@@ -190,18 +259,25 @@ def run(args):
     protect_output(output, paths)
     # Finish validation before opening the report, preserving it on input errors.
     groups, transcripts = duplicate_groups(paths)
+    action_counts = defaultdict(int)
     with output.open('w', newline='', encoding='utf-8') as handle:
         writer = csv.DictWriter(handle, fieldnames=FIELDS)
         writer.writeheader()
-        writer.writerows(report_rows(groups))
+        for row in report_rows(groups, args.recommend_removals):
+            writer.writerow(row)
+            action_counts[row['recommendation']] += 1
     duplicate_transcripts = sum(len(members) for key, members in groups)
     print('{}: {} duplicate group(s), {} transcript(s) in groups'.format(
-        'FAIL' if groups else 'PASS', len(groups), duplicate_transcripts))
+        ('REVIEW' if args.recommend_removals else 'FAIL') if groups else 'PASS', len(groups), duplicate_transcripts))
     for name, count in (('files', len(paths)), ('transcripts', transcripts),
                         ('duplicate_groups', len(groups)), ('duplicate_transcripts', duplicate_transcripts),
                         ('redundant_transcripts', duplicate_transcripts - len(groups)),
                         ('unique_transcripts', transcripts - duplicate_transcripts)):
         print('{}: {}'.format(name, count))
+    if args.recommend_removals:
+        for action in ('keep', 'remove_from_gff', 'review'):
+            print('recommend_{}: {}'.format(action, action_counts[action]))
+        print('Recommendations apply only to LEAP GFF models; no annotation or database records were changed.')
     return int(bool(groups))
 
 
@@ -209,6 +285,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('annotation', help='Pipeline GFF/GFF3 file or directory (including gzip)')
     parser.add_argument('output', help='CSV: one row per member of each duplicate group')
+    parser.add_argument('--recommend-removals', action='store_true',
+                        help='Recommend GFF-only retention/removal from tags and numeric stable IDs; never edit inputs')
     args = parser.parse_args()
     try:
         return run(args)

@@ -8,6 +8,7 @@ include { RUN_DATACHECK as CHECK_COMPLETENESS } from '../../../modules/local/dat
 include { RUN_DATACHECK as CHECK_PARTIAL_PROTECTION } from '../../../modules/local/datacheck/main.nf'
 include { RUN_DATACHECK as CHECK_REFERENCE_COORDINATES } from '../../../modules/local/datacheck/main.nf'
 include { RUN_DATACHECK as CHECK_CDS_OVERLAPS } from '../../../modules/local/datacheck/main.nf'
+include { RUN_DATACHECK as CHECK_DUPLICATE_TRANSCRIPTS } from '../../../modules/local/datacheck/main.nf'
 include { SUMMARIZE_DATACHECKS } from '../../../modules/local/datacheck_summary/main.nf'
 include { DATACHECK_GATE } from '../../../modules/local/datacheck_gate/main.nf'
 
@@ -19,6 +20,7 @@ workflow DATACHECKS {
     selected_extensions
     natural_overlaps
     reference_lengths
+    review_ready
 
     main:
     // toList emits [] even for an empty stream. Missing partitions must reach
@@ -71,7 +73,8 @@ workflow DATACHECKS {
         'check_for_shorter_transcripts.py', 'check_internal_exon_positions.py',
         'check_transcript_preservation.py', 'check_stats_gff_consistency.py',
         'check_gff_structural_integrity.py', 'check_output_completeness.py',
-        'check_partial_protection.py', 'check_reference_coordinates.py', 'check_cds_overlaps.py'
+        'check_partial_protection.py', 'check_reference_coordinates.py', 'check_cds_overlaps.py',
+        'check_duplicate_transcripts.py'
     ].collect { name -> file("${moduleDir}/../../../assets/${name}", checkIfExists: true) })
     runner = Channel.value(file("${moduleDir}/../../../bin/run_datacheck.py", checkIfExists: true))
     CHECK_BOUNDARIES(jobs, 'boundary', check_scripts, runner, reference_lengths)
@@ -83,20 +86,21 @@ workflow DATACHECKS {
     CHECK_PARTIAL_PROTECTION(jobs, 'partial_protection', check_scripts, runner, reference_lengths)
     CHECK_REFERENCE_COORDINATES(jobs, 'reference_coordinates', check_scripts, runner, reference_lengths)
     CHECK_CDS_OVERLAPS(jobs, 'cds_overlaps', check_scripts, runner, reference_lengths)
+    CHECK_DUPLICATE_TRANSCRIPTS(jobs, 'duplicate_transcripts', check_scripts, runner, reference_lengths)
 
     statuses = CHECK_BOUNDARIES.out.status.mix(
         CHECK_INTERNAL_EXONS.out.status, CHECK_PRESERVATION.out.status, CHECK_STATS_GFF.out.status,
         CHECK_STRUCTURE.out.status, CHECK_COMPLETENESS.out.status, CHECK_PARTIAL_PROTECTION.out.status,
-        CHECK_REFERENCE_COORDINATES.out.status, CHECK_CDS_OVERLAPS.out.status)
+        CHECK_REFERENCE_COORDINATES.out.status, CHECK_CDS_OVERLAPS.out.status, CHECK_DUPLICATE_TRANSCRIPTS.out.status)
         .map { chromosome, strand, check_name, result -> result }.toList()
     SUMMARIZE_DATACHECKS(statuses, expected_manifest, runner)
-    DATACHECK_GATE(SUMMARIZE_DATACHECKS.out.verdict, runner)
+    DATACHECK_GATE(SUMMARIZE_DATACHECKS.out.verdict, runner, review_ready)
 
     emit:
     reports = CHECK_BOUNDARIES.out.reports.mix(
         CHECK_INTERNAL_EXONS.out.reports, CHECK_PRESERVATION.out.reports, CHECK_STATS_GFF.out.reports,
         CHECK_STRUCTURE.out.reports, CHECK_COMPLETENESS.out.reports, CHECK_PARTIAL_PROTECTION.out.reports,
-        CHECK_REFERENCE_COORDINATES.out.reports, CHECK_CDS_OVERLAPS.out.reports)
+        CHECK_REFERENCE_COORDINATES.out.reports, CHECK_CDS_OVERLAPS.out.reports, CHECK_DUPLICATE_TRANSCRIPTS.out.reports)
     summary = SUMMARIZE_DATACHECKS.out.reports
     passed = DATACHECK_GATE.out
 }

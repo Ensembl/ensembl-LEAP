@@ -1,5 +1,9 @@
 # Build a JBrowse datacheck review
 
+For LEAP's automatic raw/LEAP/external/internal annotation views, HAVANA JBrowser
+samplesheets and server launch script, see [manual reviewer preparation](manual_review.md).
+This guide covers the separate desktop datacheck session builder.
+
 `assets/build_jbrowse_review.py` reproduces the LEAP review session: raw and extended transcripts, raw CDS and UTR segments, overlap failures, shared-splice-site allowances, and current-annotation allowances. The generated session format was checked with JBrowse Desktop 4.3.0.
 
 ## Build the overlap review

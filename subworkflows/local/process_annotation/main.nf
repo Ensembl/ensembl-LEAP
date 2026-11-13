@@ -25,10 +25,14 @@ include { SPLIT_TRANSCRIPTS_BASED_ON_EXON_NUMBER } from '../../../modules/local/
 workflow PROCESS_ANNOTATION {
     take:
     reads_sample_sheet
+    db_secrets
     
     main:
     // Classify annotation without letting partials supply extension endpoints.
-    GET_CURRENT_ANNOTATION(reads_sample_sheet.splitCsv(header: true))
+    export_helpers = Channel.value(['get_current_annotation.py', 'annotation_db.py', 'gxf_dump'].collect {
+        name -> file("${moduleDir}/../../../bin/${name}", checkIfExists: true)
+    })
+    GET_CURRENT_ANNOTATION(reads_sample_sheet.splitCsv(header: true), db_secrets, export_helpers)
 
     // Keep full-length/partial classifications for final-output eligibility.
     FILTER_PARTIAL_TRANSCRIPTS(GET_CURRENT_ANNOTATION.out.current_annotation_by_chromosome)

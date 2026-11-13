@@ -22,6 +22,10 @@ test.csv
 data
 input_csvs
 *trace*
+db_secrets.json
+db_secrets.*.json
+*.db_secrets.json
+!examples/db_secrets.example.json
 
 # Small checked-in datacheck fixtures are source files, not generated run data.
 !tests/data/
