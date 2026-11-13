@@ -363,6 +363,7 @@ class LeapContext:
         self.raw, self.extended = raw, extended
         root = Path(directory)
         self.natural, self.candidates = {}, {}
+        self.candidate_locations, self.candidate_files = {}, {}
         self.blockers, self.flanks, self.special = {}, {}, {}
         partitions = {model['location'][1:] for model in extended.values()}
         for chromosome, strand in partitions:
@@ -393,8 +394,9 @@ class LeapContext:
                             kind, chromosome, strand
                         )
                     )
+                self.candidate_files[(chromosome, strand, kind)] = files[0]
                 with files[0].open() as handle:
-                    for line in handle:
+                    for number, line in enumerate(handle, 1):
                         fields = line.rstrip('\r\n').split('\t')
                         if (
                             len(fields) != 10
@@ -424,9 +426,12 @@ class LeapContext:
                             raise ValueError(
                                 str(files[0]) + ': invalid original extension boundary'
                             )
-                        self.candidates.setdefault(
-                            (chromosome, strand, kind, inner), []
-                        ).append((start, end, genes, fields[3] == '.', baseline))
+                        # The writer overwrites its splice-site dictionary in file
+                        # order. Support and group metadata must come from that same
+                        # final row, even when earlier rows have identical geometry.
+                        key = (chromosome, strand, kind, inner)
+                        self.candidates[key] = (start, end, genes, fields[3] == '.', baseline)
+                        self.candidate_locations[key] = (files[0], number)
         self.raw_terminals = defaultdict(list)
         for tid, model in raw.items():
             if model['transcript_type'] is None:
@@ -538,25 +543,29 @@ class LeapContext:
         self.terminals = {key: IntervalIndex(value) for key, value in terminals.items()}
 
     def candidate(self, source, exon, kind, required=True):
+        """Select the writer's last row first, then validate its applicability."""
         gene, chromosome, strand = source['location']
         inner = exon[1] if (kind == 'FE') == (strand == '+') else exon[0]
-        candidates = [
-            row
-            for row in self.candidates.get((chromosome, strand, kind, inner), [])
-            if gene in row[2]
-        ]
-        if required:
-            candidates = [
-                row for row in candidates if row[0] <= exon[0] and exon[1] <= row[1]
-            ]
-        metadata = {(row[2], row[3], row[4]) for row in candidates}
-        if len(metadata) > 1 or required and not metadata:
-            raise ValueError(
-                'Missing or ambiguous fixed-extension context for {} {} {} {}'.format(
-                    gene, chromosome, strand, kind
-                )
-            )
-        return next(iter(metadata)) if metadata else None
+        key = (chromosome, strand, kind, inner)
+        row = self.candidates.get(key)
+        path = self.candidate_files[(chromosome, strand, kind)]
+        location = self.candidate_locations.get(key)
+        context = '{}:{}'.format(*location) if location else str(path)
+        description = '{} {} {} {} splice_site={}'.format(gene, chromosome, strand, kind, inner)
+        if row is None:
+            if not required:
+                return None
+            raise ValueError('{}: missing fixed-extension context for {}: no record for splice site'.format(
+                context, description))
+        if gene not in row[2]:
+            raise ValueError('{}: incompatible final fixed-extension record for {}: selected gene group {} omits source gene'.format(
+                context, description, ','.join(row[2])))
+        if required and not (row[0] <= exon[0] and exon[1] <= row[1]):
+            raise ValueError('{}: incompatible final fixed-extension record for {}: selected interval {}-{} does not contain output exon {}-{}'.format(
+                context, description, row[0], row[1], exon[0], exon[1]))
+        # An unchanged terminal exon may exceed a shorter selected candidate:
+        # LEAP never shrinks it. Processed extensions may lie inside the candidate.
+        return row[2], row[3], row[4]
 
     def grouped_annotation_parts(self, source, original, ends):
         """Added isoform bases already covered by its original eligible splice group.

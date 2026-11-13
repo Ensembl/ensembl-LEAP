@@ -985,13 +985,106 @@ class LeapRulesTests(unittest.TestCase):
                 self.assertIn('must not overwrite', result.stderr)
                 self.assertEqual(path.read_bytes(), content)
 
+    def test_duplicate_candidates_use_last_support_on_both_strands_and_ends(self):
+        for strand in ('+','-'):
+            for side in ('left','right'):
+                for last_annotation in (False,True):
+                    with self.subTest(strand=strand,side=side,last_annotation=last_annotation):
+                        raw = model('source','A',[(200,250),(400,450)],[(221,250),(400,429)],
+                                    [(200,220)],[(430,450)],strand)
+                        ext = model('source','A',[(150 if side=='left' else 200,250),
+                                                (400,500 if side=='right' else 450)],
+                                    [(221,250),(400,429)],[(150 if side=='left' else 200,220)],
+                                    [(430,500 if side=='right' else 450)],strand)
+                        a,b = (160,170) if side=='left' else (480,490)
+                        target = model('target','B',[(a-10,b+10),(600,650)],[(a,b)],
+                                       [(a-10,a-1)],[(631,650)],strand)
+                        kind = check.terminal_kind(strand,side)
+                        def duplicate(context):
+                            path = next((context/'fixed_extensions').glob('*_'+kind+'_*'))
+                            read = path.read_text().rstrip().split('\t')
+                            annotation = read.copy();annotation[3]='.'
+                            rows = [read,annotation] if last_annotation else [annotation,read]
+                            path.write_text(''.join('\t'.join(row)+'\n' for row in rows))
+                        rows,counts = self.evaluate(raw+target,ext,edit=duplicate)
+                        self.assertEqual(counts['new_cross_gene_cds_overlap'],0 if last_annotation else 1)
+                        hit = next(r for r in rows if r['check_rule']=='full_length_cds')
+                        self.assertEqual(hit['status'],'allowed_current_annotation' if last_annotation else 'new_cross_gene_cds_overlap')
+
+    def test_duplicate_candidates_keep_last_ordered_gene_group(self):
+        for final_groups,safe in [('A,Z',True),('Z,A',False)]:
+            def duplicate(context):
+                path = next((context/'fixed_extensions').glob('*FE*'))
+                rows = []
+                for line in path.read_text().splitlines():
+                    row = line.split('\t')
+                    if row[9]=='A':
+                        first = row.copy();first[9]='A,Z'
+                        last = row.copy();last[9]=final_groups
+                        rows.extend([first,last])
+                    else:
+                        rows.append(row)
+                path.write_text(''.join('\t'.join(row)+'\n' for row in rows))
+            rows,counts = self.evaluate(source()+terminal_target(),source(150)+terminal_target(),
+                                        natural='A\tB\n',edit=duplicate)
+            self.assertEqual(counts['unsafe_terminal_overlap'],0 if safe else 1)
+
+    def test_last_candidate_is_validated_without_falling_back(self):
+        for problem in ('gene','geometry'):
+            def duplicate(context):
+                path = next((context/'fixed_extensions').glob('*FE*'))
+                original = path.read_text()
+                last = original.rstrip().split('\t')
+                if problem=='gene':last[9]='B'
+                else:last[1]='170'  # Cannot contain the actual output starting at 150.
+                path.write_text(original+'\t'.join(last)+'\n')
+            with self.assertRaisesRegex(ValueError, 'splice_site=250.*'+('omits source gene' if problem=='gene' else 'does not contain output exon')):
+                self.evaluate(source(),source(150),edit=duplicate)
+
+    def test_processed_end_can_be_contained_and_unchanged_end_can_exceed_candidate(self):
+        partial = model('target','A',[(180,195)],[(185,190)])
+        def selected(context):
+            path = next((context/'fixed_extensions').glob('*FE*'))
+            row = path.read_text().rstrip().split('\t');row[1]='150'
+            path.write_text('\t'.join(row)+'\n')
+        rows,counts = self.evaluate(source()+partial,source(180),edit=selected)
+        self.assertEqual(counts['partial_cds_failures'],1)
+        self.assertEqual(next(r for r in rows if r['check_rule']=='within_gene_partial_cds')['failing_intervals'],'185-190')
+        rows,counts = self.evaluate(source(100),source(100),edit=selected)
+        self.assertEqual(rows,[])
+        self.assertEqual(counts['leap_rule_failures'],0)
+
+    def test_saved_ddx41_duplicate_annotation_read_candidates(self):
+        import shutil
+        fixture = ROOT/'tests/data/leap_cross_gene/ddx41_duplicate_candidates'
+        with tempfile.TemporaryDirectory() as directory:
+            context = Path(directory)/'leap_run'
+            shutil.copytree(fixture/'leap_run',context)
+            output = Path(directory)/'report.csv'
+            command = [sys.executable,str(ROOT/'assets/check_cds_overlaps.py'),str(fixture/'raw.gff3'),
+                       str(fixture/'extended.gff3'),str(output),'--extension-stats',str(fixture/'stats.tsv'),
+                       '--leap-output-dir',str(context)]
+            result = subprocess.run(command,capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertIn('partial_cds_failures: 0',result.stdout)
+            raw,new = check.read_annotation(fixture/'raw.gff3'),check.read_annotation(fixture/'extended.gff3')
+            source_model = new['ENST00000330503.12']
+            ctx = check.LeapContext(raw,new,context)
+            self.assertEqual(ctx.candidate(source_model,source_model['exon'][0],'LE'),
+                             (('ENSG00000183258.18',),False,177511569))
+            bed = context/'fixed_extensions/5_negative_LE_protected.bed'
+            bed.write_text(''.join(reversed(bed.read_text().splitlines(True))))
+            ctx = check.LeapContext(raw,new,context)
+            self.assertEqual(ctx.candidate(source_model,source_model['exon'][0],'LE'),
+                             (('ENSG00000183258.18',),True,None))
+
     def test_required_context_errors(self):
         for error in (
             'natural',
             'fixed_missing',
             'fixed_duplicate',
             'candidate_missing',
-            'candidate_ambiguous',
+            'candidate_wrong_gene',
             'type_missing',
         ):
             with self.subTest(error=error), tempfile.TemporaryDirectory() as directory:
@@ -1008,10 +1101,8 @@ class LeapRulesTests(unittest.TestCase):
                     fe.with_name('duplicate_' + fe.name).write_text(fe.read_text())
                 if error == 'candidate_missing':
                     fe.write_text('')
-                if error == 'candidate_ambiguous':
-                    fe.write_text(
-                        fe.read_text() + fe.read_text().replace('\tA\n', '\tA,B\n')
-                    )
+                if error == 'candidate_wrong_gene':
+                    fe.write_text(fe.read_text() + fe.read_text().replace('\tA\n', '\tB\n'))
                 if error == 'type_missing':
                     r.write_text(
                         r.read_text().replace('transcript_type=protein_coding;', '')

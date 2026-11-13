@@ -28,6 +28,7 @@ python3 assets/check_cds_overlaps.py \
 | bed_touch | 0 | BED endpoints touch without positive-length terminal overlap |
 | seven_partial_cds_failures | 1 | Seven unsafe read-driven hits on two partial raw CDS models |
 | grouped_annotation_partial_cds | 0 | SCNN1A contact lies within the verified original grouped boundary |
+| ddx41_duplicate_candidates | 0 | Coincident annotation/read records use the final row, matching the writer |
 | shared_first_exon_different_genes | 0 | Raw ADORA3 and TMIGD3 models share their first exon despite different gene IDs |
 
 The last fixture is extracted from the supplied `leap_correct` raw annotation and its internally processed output, with corrected stats and the original relevant fixed-candidate metadata. Its targets are `ENST00000534890.1` on chromosome 12 and `ENST00000585355.5` on chromosome 17, each missing a 3′ UTR. All seven failures must remain even though production LEAP excludes these partial CDS models from cross-gene protection.
@@ -41,3 +42,5 @@ The ADORA3/TMIGD3 fixture is extracted from the supplied raw and processed annot
 The differential clipping matrix tests 144 combinations of strand, extension end, gene relationship, candidate support, protected feature and boundary contact against the actual `stop_cds_overlap.py` function. Terminal tests execute the actual `overlap_safety_checker.py`. The seven partial-CDS failures remain explicit regression expectations.
 
 The `grouped_annotation_partial_cds` fixture is a minimal extraction of the newer human chromosome 12 SCNN1A case. Source `ENST00000396966.6` ends at 6374803 in raw annotation; eligible donor `ENST00000360168.8` shares its splice site and extends the raw group to 6375224. The selected read endpoint is 6375258. The 34-base contact with partial `ENST00000536788.1` at `12:6374804-6374837` is reported as `allowed_grouped_annotation`, with the donor and original boundary recorded. Removing that donor eliminates the allowance even if the saved candidate baseline is unchanged. The seven unsafe-read examples above continue to fail.
+
+The `ddx41_duplicate_candidates` fixture retains two eligible DDX41 raw models, the extended source `ENST00000330503.12`, its stats and original fixed-candidate rows. At negative-strand LE splice site 177511927, annotation and read-labelled rows both span `177511569-177511927`. The last read-labelled row supplies support and original-boundary metadata. Reversing the rows selects annotation metadata instead. These are valid ordered candidates, rather than ambiguous input. Synthetic regressions confirm both strands and terminal ends, unsafe read-last outcomes, ordered gene groups and rejection of an incompatible last row without falling back to earlier entries.

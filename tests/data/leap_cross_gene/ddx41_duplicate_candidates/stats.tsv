@@ -1,0 +1,2 @@
+gene_id	transcript_id	transcript_location	five_prime_extension	three_prime_extension	five_prime_support	five_prime_read_count	three_prime_support	three_prime_read_count
+ENSG00000183258.18	ENST00000330503.12	5:177511569-177516961	0	8	blacklisted	blacklisted	reads	2

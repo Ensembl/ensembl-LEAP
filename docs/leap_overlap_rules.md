@@ -31,6 +31,12 @@ Clipping and terminal safety are independent. Annotation support bypasses clippi
 
 `--leap-output-dir` must refer to the original run. Its `natural_overlaps/` and `fixed_extensions/` provide ordered groups, natural pairs, grouped original boundaries and candidate support. Missing or ambiguous required context is an error. The current GFF determines terminal geometry, so reverted internal extensions are not reinstated. Use corrected processed stats with processed GFFs.
 
+Candidate selection follows the final writer: for each chromosome, strand, FE/LE kind and internal splice site, the **last row in the BED file wins**. Selection occurs before gene-membership or geometric validation. Earlier rows cannot supply a more permissive support label, an alternative gene group, or a containing interval when the selected last record is incompatible. Support, original boundary and ordered gene IDs are taken together from that single record, matching the stats/GFF consistency check. Missing records, duplicate context files and incompatible selected records remain input errors. Diagnostics include the splice site and, for a selected record, its source file and line.
+
+Changed ends must fit within the selected candidate; exact endpoint equality is not required because internal-extension processing can restore part of an extension. Unchanged terminal exons may extend beyond a shorter candidate because the writer never shrinks their original annotation.
+
+The DDX41 case (`ENSG00000183258.18`, chromosome 5, negative-strand LE splice site 177511927) has two rows spanning `177511569-177511927`. One uses annotation support (`.`), followed by a read-labelled row whose original boundary is also 177511569. Both coordinates are valid. The writer deterministically retains the final read-labelled row; different support labels alone do not make the context ambiguous. The minimal fixture is `tests/data/leap_cross_gene/ddx41_duplicate_candidates`.
+
 For protection-only runs, use the run root containing final protected
 `fixed_extensions/`, not `fixed_extensions_before_partial_protection/`.
 
@@ -54,6 +60,6 @@ The raw ADORA3 (`ENST00000241356.5`) and TMIGD3 (`ENST00001035321.1`) records bo
 
 Run `python3 -m unittest discover -s tests`.
 
-The tests execute LEAP's actual clipping function against the datacheck over 144 combinations of strand, extension end, same/different gene, candidate support, protected feature and boundary position. They also execute LEAP's terminal checker to validate ordered pairs, shared groups and single-exon field placement. Additional tests cover special flanks, missing/ambiguous context, annotation support failing terminal safety, within-gene non-coding guards, the shared ADORA3/TMIGD3 annotation and all seven retained partial-CDS failures.
+The tests execute LEAP's actual clipping function against the datacheck over 144 combinations of strand, extension end, same/different gene, candidate support, protected feature and boundary position. They also execute LEAP's terminal checker to validate ordered pairs, shared groups and single-exon field placement. Additional tests cover last-row precedence, incompatible final candidates, special flanks, missing/ambiguous files, annotation support failing terminal safety, within-gene non-coding guards, the shared ADORA3/TMIGD3 annotation and all seven retained partial-CDS failures.
 
 Production LEAP scripts and internal-extension processing are unchanged by this datacheck refinement. This validates overlap policy; use the separate boundary and internal-exon datachecks for transcript shortening and splice-structure changes.
