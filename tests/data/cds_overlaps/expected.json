@@ -1,0 +1,134 @@
+{
+  "same_gene_shared_site": {
+    "exit_code": 0,
+    "overlap_status": "allowed_shared_splice_site"
+  },
+  "same_gene_wrong_site": {
+    "exit_code": 1,
+    "overlap_status": "new_cds_overlap"
+  },
+  "cross_gene_intron": {
+    "exit_code": 0,
+    "overlap_status": null
+  },
+  "cross_gene_cds": {
+    "exit_code": 0,
+    "overlap_status": "allowed_leap_overlap"
+  },
+  "cross_gene_utr_only": {
+    "exit_code": 0,
+    "overlap_status": "allowed_leap_overlap"
+  },
+  "existing_overlap_unchanged": {
+    "exit_code": 0,
+    "overlap_status": null
+  },
+  "existing_overlap_grows": {
+    "exit_code": 0,
+    "overlap_status": "allowed_leap_overlap"
+  },
+  "same_gene_mixed": {
+    "exit_code": 1,
+    "overlap_status": "new_cds_overlap"
+  },
+  "single_exon_no_shared_site": {
+    "exit_code": 1,
+    "overlap_status": "new_cds_overlap"
+  },
+  "opposite_strand": {
+    "exit_code": 0,
+    "overlap_status": null
+  },
+  "one_base_overlap": {
+    "exit_code": 0,
+    "overlap_status": "allowed_leap_overlap"
+  },
+  "adjacent_no_overlap": {
+    "exit_code": 0,
+    "overlap_status": null
+  },
+  "other_isoform_exonic": {
+    "exit_code": 0,
+    "overlap_status": "allowed_leap_overlap"
+  },
+  "self_overlap_ignored": {
+    "exit_code": 0,
+    "overlap_status": null
+  },
+  "same_gene_shared_site_mirrored": {
+    "exit_code": 0,
+    "overlap_status": "allowed_shared_splice_site"
+  },
+  "same_gene_wrong_site_mirrored": {
+    "exit_code": 1,
+    "overlap_status": "new_cds_overlap"
+  },
+  "cross_gene_intron_mirrored": {
+    "exit_code": 0,
+    "overlap_status": null
+  },
+  "cross_gene_cds_mirrored": {
+    "exit_code": 0,
+    "overlap_status": "allowed_leap_overlap"
+  },
+  "same_gene_mixed_mirrored": {
+    "exit_code": 1,
+    "overlap_status": "new_cds_overlap"
+  },
+  "same_gene_shared_site_strand_flipped": {
+    "exit_code": 0,
+    "overlap_status": "allowed_shared_splice_site"
+  },
+  "same_gene_shared_site_mirrored_strand_flipped": {
+    "exit_code": 0,
+    "overlap_status": "allowed_shared_splice_site"
+  },
+  "same_gene_existing_overlap_grows": {
+    "exit_code": 1,
+    "overlap_status": "new_cds_overlap"
+  },
+  "target_outer_boundary_not_splice_site": {
+    "exit_code": 1,
+    "overlap_status": "new_cds_overlap"
+  },
+  "annotation_same_gene_allowed": {
+    "exit_code": 0,
+    "overlap_status": "allowed_current_annotation"
+  },
+  "annotation_cross_gene_cds_allowed": {
+    "exit_code": 0,
+    "overlap_status": "allowed_leap_overlap"
+  },
+  "annotation_cross_gene_utr_allowed": {
+    "exit_code": 0,
+    "overlap_status": "allowed_leap_overlap"
+  },
+  "annotation_right_negative_allowed": {
+    "exit_code": 0,
+    "overlap_status": "allowed_current_annotation"
+  },
+  "reads_same_gene_still_fails": {
+    "exit_code": 1,
+    "overlap_status": "new_cds_overlap"
+  },
+  "mixed_annotation_reads_not_exempt": {
+    "exit_code": 1,
+    "overlap_status": "new_cds_overlap"
+  },
+  "annotation_left_negative_allowed": {
+    "exit_code": 0,
+    "overlap_status": "allowed_current_annotation"
+  },
+  "annotation_right_positive_allowed": {
+    "exit_code": 0,
+    "overlap_status": "allowed_current_annotation"
+  },
+  "annotation_and_reads_opposite_ends": {
+    "exit_code": 1,
+    "overlap_status": "new_cds_overlap"
+  },
+  "annotation_and_shared_site_allowed": {
+    "exit_code": 0,
+    "overlap_status": "allowed_multiple_reasons"
+  }
+}

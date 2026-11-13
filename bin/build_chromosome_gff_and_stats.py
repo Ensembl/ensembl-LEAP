@@ -12,6 +12,8 @@ def get_args():
     parser.add_argument("black_list", type=str, help="File with blacklisted transcripts to exclude from the output.")
     parser.add_argument("output_gff", type=str, help="Output GFF file with extended annotations.")
     parser.add_argument("output_stats", type=str, help="Output file for extension statistics.")
+    parser.add_argument("--partial-annotation", required=True,
+                        help="Protection-only partial GFF; its models are omitted from final GFF and stats. May be empty.")
     return parser.parse_args()
 
 def open_file(file_path):
@@ -30,6 +32,34 @@ def position_comparison(possible_extension, current_annotation, strand, end):
         output = True
     return output
 
+
+def partial_transcript_keys(path):
+    """Use exact IDs and locations, including version suffixes and PAR copies."""
+    keys = set()
+    with open_file(path) as handle:
+        for number, line in enumerate(handle, 1):
+            if not line.strip() or line.startswith('#'):
+                continue
+            fields = line.rstrip('\r\n').split('\t')
+            if len(fields) != 9:
+                raise ValueError(f'{path}:{number}: expected 9 GFF columns')
+            if fields[2] == 'gene':
+                continue
+            attrs = dict(item.split('=', 1) for item in fields[8].split(';') if '=' in item)
+            identifier = attrs.get('transcript_id')
+            if not identifier or identifier == '.' or fields[0] in ('', '.') or fields[6] not in ('+', '-'):
+                raise ValueError(f'{path}:{number}: partial record needs transcript_id, chromosome and strand')
+            keys.add((fields[0], fields[6], identifier))
+    return keys
+
+
+def gene_feature_id(attributes):
+    """Keep the GFF gene identity separate from its stable gene_id metadata."""
+    identifier = attributes.get('Parent', attributes['gene_id'])
+    if identifier in ('', '.') or ',' in identifier:
+        raise ValueError('Expected one gene Parent for transcript ' + attributes['transcript_id'])
+    return identifier
+
 def main():
     # Parse command line arguments
     args = get_args()
@@ -39,6 +69,9 @@ def main():
     black_list = args.black_list
     output_gff = args.output_gff
     output_stats = args.output_stats
+    # Exclude whole partial models before applying either end, so their child
+    # records, statistics and gene-bound contributions cannot leak into output.
+    partials = partial_transcript_keys(args.partial_annotation)
     
     # Determine strand and options based on input file names
     if "positive" in input_fe_extensions:
@@ -81,9 +114,14 @@ def main():
     current_transcript = {}
     with open_file(input_annotation) as f, open("temp_output.gff", "w") as output_file:
         for line in f:
+            if not line.strip() or line.startswith('#'):
+                continue
             fields = line.strip().split('\t')
             attr_dict = dict(item.split('=', 1) for item in fields[8].split(';') if '=' in item)
+            if (fields[0], fields[6], attr_dict.get('transcript_id')) in partials:
+                continue
             if fields[2] == "transcript":
+                gene_feature_id(attr_dict)
                 transcript_fields = fields.copy()
                 current_transcript[attr_dict['transcript_id']] = transcript_fields
                 current_transcript[attr_dict['transcript_id']].append([])
@@ -201,18 +239,19 @@ def main():
         for transcript_id, transcript_data in current_transcript.items():
             transcript_data = transcript_data[0:9]
             attr_dict = dict(item.split('=', 1) for item in transcript_data[8].split(';') if '=' in item)
-            gene_line = f"ID={attr_dict['gene_id']};gene_id={attr_dict['gene_id']};gene_type={attr_dict['gene_type']};gene_name={attr_dict['gene_name']}"
-            if attr_dict["gene_id"] not in genes:
+            gene_identifier = gene_feature_id(attr_dict)
+            gene_line = f"ID={gene_identifier};gene_id={attr_dict['gene_id']};gene_type={attr_dict['gene_type']};gene_name={attr_dict['gene_name']}"
+            if gene_identifier not in genes:
                 gene_row = transcript_data.copy()
                 gene_row[2] = "gene"
                 gene_row[8] = gene_line
-                genes[attr_dict["gene_id"]] = gene_row
+                genes[gene_identifier] = gene_row
             else:
                 # Compare as integers
-                if int(transcript_data[3]) < int(genes[attr_dict["gene_id"]][3]):
-                    genes[attr_dict["gene_id"]][3] = transcript_data[3]
-                if int(transcript_data[4]) > int(genes[attr_dict["gene_id"]][4]):
-                    genes[attr_dict["gene_id"]][4] = transcript_data[4]
+                if int(transcript_data[3]) < int(genes[gene_identifier][3]):
+                    genes[gene_identifier][3] = transcript_data[3]
+                if int(transcript_data[4]) > int(genes[gene_identifier][4]):
+                    genes[gene_identifier][4] = transcript_data[4]
         for gene, gene_info in genes.items():
             output_file.write("\t".join(gene_info) + "\n")
 

@@ -1,0 +1,14 @@
+1	test	transcript	200	450	.	+	.	transcript_id=source;gene_id=A;transcript_type=protein_coding;
+1	test	exon	200	250	.	+	.	transcript_id=source;gene_id=A;transcript_type=protein_coding;exon_number=1;
+1	test	exon	400	450	.	+	.	transcript_id=source;gene_id=A;transcript_type=protein_coding;exon_number=2;
+1	test	CDS	221	250	.	+	.	transcript_id=source;gene_id=A;transcript_type=protein_coding;
+1	test	CDS	400	429	.	+	.	transcript_id=source;gene_id=A;transcript_type=protein_coding;
+1	test	five_prime_UTR	200	220	.	+	.	transcript_id=source;gene_id=A;transcript_type=protein_coding;
+1	test	three_prime_UTR	430	450	.	+	.	transcript_id=source;gene_id=A;transcript_type=protein_coding;
+1	test	transcript	80	180	.	+	.	transcript_id=target;gene_id=B;transcript_type=protein_coding;
+1	test	exon	80	100	.	+	.	transcript_id=target;gene_id=B;transcript_type=protein_coding;exon_number=1;
+1	test	exon	140	180	.	+	.	transcript_id=target;gene_id=B;transcript_type=protein_coding;exon_number=2;
+1	test	CDS	90	100	.	+	.	transcript_id=target;gene_id=B;transcript_type=protein_coding;
+1	test	CDS	140	149	.	+	.	transcript_id=target;gene_id=B;transcript_type=protein_coding;
+1	test	five_prime_UTR	80	89	.	+	.	transcript_id=target;gene_id=B;transcript_type=protein_coding;
+1	test	three_prime_UTR	150	180	.	+	.	transcript_id=target;gene_id=B;transcript_type=protein_coding;

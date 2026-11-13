@@ -1,0 +1,7 @@
+1	test	transcript	150	450	.	+	.	transcript_id=source;gene_id=A;transcript_type=protein_coding;
+1	test	exon	150	250	.	+	.	transcript_id=source;gene_id=A;transcript_type=protein_coding;exon_number=1;
+1	test	exon	400	450	.	+	.	transcript_id=source;gene_id=A;transcript_type=protein_coding;exon_number=2;
+1	test	CDS	221	250	.	+	.	transcript_id=source;gene_id=A;transcript_type=protein_coding;
+1	test	CDS	400	429	.	+	.	transcript_id=source;gene_id=A;transcript_type=protein_coding;
+1	test	five_prime_UTR	150	220	.	+	.	transcript_id=source;gene_id=A;transcript_type=protein_coding;
+1	test	three_prime_UTR	430	450	.	+	.	transcript_id=source;gene_id=A;transcript_type=protein_coding;

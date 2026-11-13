@@ -1,8 +1,8 @@
 process FIX_UNSAFE_OVERLAPS {
     label "process_high"
     label "error_retry"
-    publishDir "${params.output_directory}/unsafe_overlaps/", mode: 'copy', pattern: "${id}_rejected.bed"
-    publishDir "${params.output_directory}/fixed_extensions/", mode: 'copy', pattern: "*F.bed"
+    publishDir "${params.output_directory}/unsafe_overlaps/", mode: 'copy', pattern: "*_rejected.bed"
+    publishDir "${params.output_directory}/fixed_extensions_before_partial_protection/", mode: 'copy', pattern: "*F.bed"
     input:
         tuple val(id), path(fe), path(le), path(unsafe_extensions)
     output:

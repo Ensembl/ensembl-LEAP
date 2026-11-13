@@ -1,0 +1,58 @@
+{
+  "internal_left_positive": {
+    "strand": "positive",
+    "restore_left": true,
+    "restore_right": false,
+    "start": 300,
+    "end": 950
+  },
+  "internal_right_positive": {
+    "strand": "positive",
+    "restore_left": false,
+    "restore_right": true,
+    "start": 50,
+    "end": 800
+  },
+  "internal_both_positive": {
+    "strand": "positive",
+    "restore_left": true,
+    "restore_right": true,
+    "start": 300,
+    "end": 800
+  },
+  "external_positive": {
+    "strand": "positive",
+    "restore_left": false,
+    "restore_right": false,
+    "start": 50,
+    "end": 950
+  },
+  "internal_left_negative": {
+    "strand": "negative",
+    "restore_left": true,
+    "restore_right": false,
+    "start": 300,
+    "end": 950
+  },
+  "internal_right_negative": {
+    "strand": "negative",
+    "restore_left": false,
+    "restore_right": true,
+    "start": 50,
+    "end": 800
+  },
+  "internal_both_negative": {
+    "strand": "negative",
+    "restore_left": true,
+    "restore_right": true,
+    "start": 300,
+    "end": 800
+  },
+  "external_negative": {
+    "strand": "negative",
+    "restore_left": false,
+    "restore_right": false,
+    "start": 50,
+    "end": 950
+  }
+}

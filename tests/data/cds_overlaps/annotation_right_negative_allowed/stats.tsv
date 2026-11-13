@@ -1,0 +1,2 @@
+gene_id	transcript_id	transcript_location	five_prime_extension	three_prime_extension	five_prime_support	five_prime_read_count	three_prime_support	three_prime_read_count
+geneA	source	1:550-850	50	0	current_annotation	7	none	7
