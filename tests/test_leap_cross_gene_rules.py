@@ -383,12 +383,119 @@ class LeapRulesTests(unittest.TestCase):
         self.assertTrue(
             any(r['check_rule'] == 'outside_leap_extension_guard' for r in rows)
         )
-        # The partial target is intentionally still checked against added bases of the actual isoform.
+        # A recorded boundary alone cannot excuse a partial-CDS hit: no eligible
+        # raw terminal donor shares this source splice site at the claimed bound.
         partial = target.replace('three_prime_UTR', 'five_prime_UTR')
         rows, counts = self.evaluate(source() + partial, edit=grouped_boundary)
         self.assertEqual(counts['new_cds_overlap'], 1)
         self.assertEqual(rows[0]['check_rule'], 'within_gene_partial_cds')
         self.assertEqual(rows[0]['intentional_partial_cds_check'], 'true')
+
+    def grouped_partial_case(self, side, strand, cds, donor_kind='eligible', selected=None, recorded=None):
+        def coding(tid, start, end, gene='A', biotype='protein_coding'):
+            low, high = [(start, 219)], [(431, end)]
+            return model(tid, gene, [(start, 250), (400, end)], [(220, 240), (410, 430)],
+                         low if strand == '+' else high, high if strand == '+' else low,
+                         strand, biotype)
+        raw_source = coding('source', 200, 450)
+        boundary = 170 if side == 'left' else 480
+        endpoint = selected if selected is not None else (150 if side == 'left' else 500)
+        extended = coding('source', endpoint if side == 'left' else 200,
+                          endpoint if side == 'right' else 450)
+        donor = coding('donor', 170 if side == 'left' else 200, 480 if side == 'right' else 450)
+        if donor_kind == 'partial':
+            donor = donor.replace('three_prime_UTR', 'five_prime_UTR')
+        elif donor_kind == 'noncoding':
+            donor = donor.replace('protein_coding', 'nonsense_mediated_decay')
+        elif donor_kind == 'other_gene':
+            donor = donor.replace('gene_id=A;', 'gene_id=B;')
+        elif donor_kind == 'other_strand':
+            donor = donor.replace('\t' + strand + '\t', '\t' + ('-' if strand == '+' else '+') + '\t')
+        elif donor_kind == 'other_chromosome':
+            donor = donor.replace('1\ttest', '2\ttest')
+        elif donor_kind == 'other_site':
+            donor = donor.replace('\t250\t', '\t251\t') if side == 'left' else donor.replace('\t400\t', '\t399\t')
+        elif donor_kind == 'source_splice_change':
+            extended = extended.replace('\t250\t', '\t251\t')
+            donor = donor.replace('\t250\t', '\t251\t')
+        elif donor_kind == 'internal_exon':
+            donor = model('donor', 'A', [(100, 120), (170, 250), (600, 650)],
+                          [(180, 200)], [(100, 120)], [(630, 650)], strand)
+        elif donor_kind == 'single_exon':
+            donor = model('donor', 'A', [(170, 250)], [(200, 220)], [(170, 199)], [(221, 250)], strand)
+        target = model('target', 'A', [(cds[0]-1, cds[1]+1)], [cds], strand=strand)
+        kind = check.terminal_kind(strand, side)
+        def edit(context):
+            path = next((context/'fixed_extensions').glob('*_'+kind+'_*'))
+            f = path.read_text().rstrip().split('\t')
+            f[3] = str(boundary if recorded is None else recorded)
+            path.write_text('\t'.join(f)+'\n')
+        start, end = (endpoint,450) if side == 'left' else (200,endpoint)
+        five,three = (200-start,end-450) if strand == '+' else (end-450,200-start)
+        stats = {('1','source'): dict(gene_id='A',transcript_location='1:{}-{}'.format(start,end),
+                 five_prime_extension=five,three_prime_extension=three,
+                 five_prime_support='reads,current_annotation' if five else 'none',
+                 three_prime_support='reads,current_annotation' if three else 'none')}
+        rows, counts = self.evaluate(raw_source+donor+target, extended, edit=edit, stats=stats)
+        row = next(r for r in rows if r['target_transcript']=='target' and r['check_rule']=='within_gene_partial_cds')
+        return row, counts
+
+    def test_grouped_annotation_partial_cds_allowance_both_strands_and_ends(self):
+        for strand in ('+','-'):
+            for side, cds, expected in [('left',(170,185),'170-185'), ('right',(465,480),'465-480')]:
+                with self.subTest(strand=strand, side=side):
+                    row,counts = self.grouped_partial_case(side,strand,cds)
+                    self.assertEqual(row['status'],'allowed_grouped_annotation')
+                    self.assertEqual(row['grouped_annotation_allowed_intervals'],expected)
+                    self.assertEqual(row['allowed_intervals'],expected)
+                    self.assertEqual(row['failing_intervals'],'')
+                    self.assertEqual(row['annotation_allowed_intervals'],'')
+                    self.assertEqual(row['grouped_annotation_donors'],'donor')
+                    prime = 'five_prime' if check.terminal_kind(strand,side)=='FE' else 'three_prime'
+                    self.assertEqual(row['grouped_annotation_boundaries'],prime+(':'+'170' if side=='left' else ':480'))
+                    self.assertEqual(counts['partial_cds_failures'],0)
+
+    def test_partial_cds_crossing_grouped_boundary_keeps_read_portion_failing(self):
+        for strand in ('+','-'):
+            for side, cds, allowed, failing in [('left',(165,185),'170-185','165-169'),
+                                               ('right',(465,485),'465-480','481-485')]:
+                row,counts = self.grouped_partial_case(side,strand,cds)
+                self.assertEqual(row['status'],'new_cds_overlap')
+                self.assertEqual(row['grouped_annotation_allowed_intervals'],allowed)
+                self.assertEqual(row['failing_intervals'],failing)
+                self.assertEqual(row['failing_bases'],5)
+                self.assertEqual(row['added_overlap_bases'],21)
+                self.assertEqual(counts['partial_cds_failures'],1)
+            for side, cds in [('left',(169,169)),('right',(481,481))]:
+                row,counts = self.grouped_partial_case(side,strand,cds)
+                self.assertEqual(row['failing_bases'],1)
+                self.assertEqual(row['grouped_annotation_allowed_intervals'],'')
+
+    def test_only_matching_eligible_raw_terminal_donors_can_allow_partial_contacts(self):
+        for donor in ('partial','noncoding','single_exon','internal_exon','other_gene',
+                      'other_strand','other_chromosome','other_site','source_splice_change'):
+            with self.subTest(donor=donor):
+                row,counts = self.grouped_partial_case('left','+',(170,185),donor_kind=donor)
+                self.assertEqual(row['status'],'new_cds_overlap')
+                self.assertEqual(row['grouped_annotation_allowed_intervals'],'')
+                self.assertEqual(counts['partial_cds_failures'],1)
+
+    def test_group_allowance_is_capped_by_selected_output_and_recorded_baseline(self):
+        for strand in ('+','-'):
+            row,_ = self.grouped_partial_case('left',strand,(180,185),selected=180)
+            self.assertEqual(row['grouped_annotation_allowed_intervals'],'180-185')
+            row,_ = self.grouped_partial_case('right',strand,(465,470),selected=470)
+            self.assertEqual(row['grouped_annotation_allowed_intervals'],'465-470')
+        # Annotation fallback removes the stored alternatives; raw donor evidence
+        # still identifies the grouped boundary without exempting read sequence.
+        row,_ = self.grouped_partial_case('left','+',(170,185),recorded='.')
+        self.assertEqual(row['status'],'allowed_grouped_annotation')
+        row,counts = self.grouped_partial_case('left','+',(165,169),recorded='.')
+        self.assertEqual(row['failing_intervals'],'165-169')
+        row,counts = self.grouped_partial_case('left','+',(170,185),recorded=190)
+        self.assertEqual(row['failing_intervals'],'170-185')
+        self.assertEqual(row['grouped_annotation_allowed_intervals'],'')
+        self.assertEqual(counts['partial_cds_failures'],1)
 
     def test_run_candidate_controls_clipping_not_stats_support(self):
         target = model(
@@ -448,6 +555,33 @@ class LeapRulesTests(unittest.TestCase):
                 for r in rows
             )
         )
+
+    def test_saved_scnna_grouped_annotation_cli_and_missing_raw_donor(self):
+        fixture = ROOT/'tests/data/leap_cross_gene/grouped_annotation_partial_cds'
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            raw = root/'raw.gff3';raw.write_text((fixture/'raw.gff3').read_text())
+            output = root/'report.csv'
+            command = [sys.executable,str(ROOT/'assets/check_cds_overlaps.py'),str(raw),
+                       str(fixture/'extended.gff3'),str(output),'--leap-output-dir',str(fixture/'leap_run'),
+                       '--extension-stats',str(fixture/'stats.tsv')]
+            result = subprocess.run(command,capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+            with output.open() as handle:
+                row = next(r for r in csv.DictReader(handle) if r['target_transcript']=='ENST00000536788.1')
+            self.assertEqual(row['status'],'allowed_grouped_annotation')
+            self.assertEqual(row['grouped_annotation_allowed_intervals'],'6374804-6374837')
+            self.assertEqual(row['grouped_annotation_boundaries'],'five_prime:6375224')
+            self.assertEqual(row['grouped_annotation_donors'],'ENST00000360168.8')
+            self.assertEqual(row['failing_bases'],'0')
+            self.assertIn('allowed_grouped_annotation: 1',result.stdout)
+            self.assertIn('partial_cds_failures: 0',result.stdout)
+            # The saved BED baseline alone cannot create the new exemption.
+            raw.write_text(''.join(line for line in raw.read_text().splitlines(True)
+                                   if 'transcript_id=ENST00000360168.8;' not in line))
+            result = subprocess.run(command,capture_output=True,text=True)
+            self.assertEqual(result.returncode,1,result.stderr)
+            self.assertIn('partial_cds_failures: 1',result.stdout)
 
     def test_saved_cli_examples_and_seven_partial_cds_regression(self):
         data = ROOT / 'tests/data/leap_cross_gene'

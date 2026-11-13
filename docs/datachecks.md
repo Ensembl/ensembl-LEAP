@@ -16,7 +16,7 @@ Datachecks run by default after the normal extension outputs have been generated
 | `CHECK_REFERENCE_COORDINATES` | Raw and final GFF features fit exact reference sequence lengths |
 | `CHECK_CDS_OVERLAPS` | LEAP overlap rules plus the existing strict within-gene partial-CDS diagnostic |
 
-The suite does not change the standalone datachecks' comparison rules. In particular, residual partial-CDS contacts within a grouped annotation boundary remain reported failures. Automatic checking does not run the standalone internal-extension processor or imply that its release-stage output has been checked.
+The suite does not change the standalone datachecks' comparison rules. Partial-CDS contacts within a verified existing grouped annotation boundary are reported as allowed; unexempted new read-driven contacts beyond it fail. Automatic checking does not run the standalone internal-extension processor or imply that its release-stage output has been checked.
 
 ## Channel wiring and missing partitions
 

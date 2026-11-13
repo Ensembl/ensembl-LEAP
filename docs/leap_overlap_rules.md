@@ -2,13 +2,13 @@
 
 `assets/check_cds_overlaps.py` validates the overlap decisions in the current LEAP code. It does not add a blanket prohibition on entering another gene's exon or use overlapping gene spans as a natural-overlap whitelist.
 
-The sole deliberate extra overlap restriction is the within-gene partial-CDS check. It retains the existing shared-splice and validated annotation-support allowances, and keeps the seven known processed partial-CDS findings as failures. CSV rows identify it with `check_rule=within_gene_partial_cds` and `intentional_partial_cds_check=true`. The console separates `leap_rule_failures` from `partial_cds_failures`.
+The sole deliberate extra overlap restriction is the within-gene partial-CDS check. It retains the existing shared-splice and validated annotation-support allowances and reports sequence within a verified original grouped annotation boundary as allowed. Unexempted read-driven contacts beyond that boundary remain failures, including the seven saved unsafe-read regression examples. CSV rows identify it with `check_rule=within_gene_partial_cds` and `intentional_partial_cds_check=true`. The console separates `leap_rule_failures` from `partial_cds_failures`.
 
 This document maps the original full-length selection predicates. Production now
 also applies a protection-only partial-reference stage after that selection;
 see [partial protection](partial_transcript_processing.md). It cannot create or
-lengthen endpoints. The independent datacheck is unchanged and its per-isoform
-partial-CDS rule can still flag grouped annotation unification. The
+lengthen endpoints. The independent datacheck reports pre-existing grouped annotation unification
+as an allowance and continues to fail new read-driven partial-CDS overlaps. The
 `partial_protection/` audit records the new production restrictions.
 
 ## Production sources
@@ -35,6 +35,16 @@ For protection-only runs, use the run root containing final protected
 `fixed_extensions/`, not `fixed_extensions_before_partial_protection/`.
 
 A shorter isoform can gain bases already present in the grouped raw annotation. Those bases are outside LEAP's read-extension clipping guard, even when the final candidate is labelled read-supported. This is different from newly extending beyond the grouped raw boundary into protected sequence. An existing overlapping gene span alone never bypasses the terminal-safety predicate.
+
+## Partial-CDS grouped annotation allowance
+
+The within-gene partial-CDS check intersects each newly added isoform UTR with the original grouped annotation extent before applying the existing annotation-support and shared-splice exceptions. Bases inside the grouped boundary are allowed, including the boundary base itself. Bases beyond it remain eligible to fail. A mixed contact reports both portions without allowing the annotation-covered part to excuse the remaining read-driven overlap. No cross-gene clipping or terminal-safety predicate changes.
+
+Eligible raw full-length, multi-exon terminal exons must verify the annotation extent at the same chromosome, strand, FE/LE kind and internal splice site, within the candidate's recorded gene group. Only these original endpoint-generating models may contribute; partial models, noncoding models, single-exon models and matching internal exons cannot supply a new allowance. The raw extreme is capped by the fixed BED's recorded original boundary. When annotation fallback has replaced the alternatives with `.`, eligible raw terminal donors recover the existing extent. Missing or ambiguous run context still errors; unsupported candidate metadata alone cannot grant an allowance.
+
+CSV rows retain `check_rule=within_gene_partial_cds` and add `grouped_annotation_allowed_intervals`, `grouped_annotation_boundaries` and `grouped_annotation_donors`. Wholly annotation-covered contacts have status `allowed_grouped_annotation`; mixed contacts retain `new_cds_overlap` and the exact residual `failing_intervals`. The JBrowse builder routes grouped allowances to a dedicated labelled track.
+
+For SCNN1A `ENST00000396966.6`, the isoform's raw end is 6374803, the original grouped endpoint is 6375224 and the selected end is 6375258. Its contact at `12:6374804-6374837` is therefore allowed as existing grouped annotation, supported by raw `ENST00000360168.8`. Read sequence beyond 6375224 receives no grouped-annotation exemption.
 
 ## Shared first exons across gene IDs
 

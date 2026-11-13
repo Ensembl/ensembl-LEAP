@@ -97,7 +97,7 @@ class BuildReviewTests(unittest.TestCase):
             config,
             json.loads((self.output / 'LEAP-overlap-review.jbrowse').read_text()),
         )
-        self.assertEqual(len(config['tracks']), 9)
+        self.assertEqual(len(config['tracks']), 10)
         self.assertIn('shared internal splice site', config['defaultSession']['name'])
         self.assertEqual(len(config['preConfiguredSessions']), 1)
         for track in config['tracks']:
@@ -176,7 +176,7 @@ class BuildReviewTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         config = json.loads((self.output / 'config.json').read_text())
         self.assertIn('no overlap markers', config['defaultSession']['name'])
-        self.assertEqual(len(config['tracks']), 9)
+        self.assertEqual(len(config['tracks']), 10)
 
     def test_extra_datacheck_track_without_overlap_reports(self):
         marker = self.directory / 'other check.gff3'
@@ -298,6 +298,25 @@ class BuildReviewTests(unittest.TestCase):
         )
         self.assertIn('\t171\t180\t', allowed)
         self.assertIn('check_rule=outside_leap_protected_regions', allowed)
+
+    def test_grouped_annotation_allowance_has_its_own_track(self):
+        with self.report.open(newline='') as handle:
+            row = next(csv.DictReader(handle))
+        row.update(status='allowed_grouped_annotation',failing_intervals='',failing_bases='0',
+                   allowed_intervals='160-180',allowed_bases='21',annotation_allowed_intervals='',
+                   splice_site_allowed_intervals='',leap_allowed_intervals='',shared_splice_sites='',
+                   grouped_annotation_allowed_intervals='160-180',
+                   grouped_annotation_boundaries='five_prime:160',grouped_annotation_donors='donor.1')
+        with self.report.open('w',newline='') as handle:
+            writer = csv.DictWriter(handle,fieldnames=list(row));writer.writeheader();writer.writerow(row)
+        result = self.run_builder('--reports',str(self.report))
+        self.assertEqual(result.returncode,0,result.stderr)
+        marker = subprocess.check_output(['tabix',str(self.output/'data/grouped_annotation_allowed.gff3.gz'),'1:1-500'],text=True)
+        self.assertIn('\t160\t180\t',marker)
+        self.assertIn('grouped_annotation_boundaries=five_prime:160',marker)
+        self.assertIn('grouped_annotation_donors=donor.1',marker)
+        for name in ('same_gene_failures','annotation_allowed','shared_site_allowed'):
+            self.assertEqual(subprocess.check_output(['tabix',str(self.output/('data/'+name+'.gff3.gz')),'1:1-500'],text=True),'')
 
     def test_legacy_report_without_reason_columns(self):
         with self.report.open(newline='') as handle:

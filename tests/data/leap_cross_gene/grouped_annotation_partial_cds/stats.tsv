@@ -1,0 +1,2 @@
+gene_id	transcript_id	transcript_location	five_prime_extension	three_prime_extension	five_prime_support	five_prime_read_count	three_prime_support	three_prime_read_count
+ENSG00000111319.17	ENST00000396966.6	12:6345124-6375258	455	2385	reads	10	current_annotation	2

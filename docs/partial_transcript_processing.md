@@ -102,9 +102,11 @@ Only four source transcripts have shorter ends:
 TSPAN9 ENST00000407263.2 stays at its original start, 3201177, with no added
 5′ extension. The previous combined-context implementation's 383 longer
 transcripts are no longer generated. Existing annotation unification at MAPKAPK5
-is preserved. One original SCNN1A finding remains in the independent stricter
-per-isoform check, inside its original annotation boundary; it is not a new
-read-driven overlap and this check was not relaxed.
+is preserved. The original per-isoform datacheck reported one SCNN1A contact
+inside the grouped annotation boundary, rather than in new read-driven sequence.
+The 13 November datacheck refinement reports that contact as allowed grouped
+annotation, while retaining failures beyond the original boundary. Production
+partial protection is unchanged.
 
 This validation uses saved **final** candidates to test the new post-selection
 stage exactly. It does not rerun the original BAM/database stages. The separate

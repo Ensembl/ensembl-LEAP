@@ -29,6 +29,9 @@ FIELDS = [
     'splice_site_allowed_intervals',
     'annotation_extension_ends',
     'leap_allowed_intervals',
+    'grouped_annotation_allowed_intervals',
+    'grouped_annotation_boundaries',
+    'grouped_annotation_donors',
     'check_rule',
     'gene_relationship',
     'target_is_partial',
@@ -424,11 +427,19 @@ class LeapContext:
                         self.candidates.setdefault(
                             (chromosome, strand, kind, inner), []
                         ).append((start, end, genes, fields[3] == '.', baseline))
+        self.raw_terminals = defaultdict(list)
         for tid, model in raw.items():
             if model['transcript_type'] is None:
                 raise ValueError(
                     'Raw transcript_type required for LEAP eligibility: ' + tid
                 )
+            gene, chromosome, strand = model['location']
+            if (chromosome, strand) not in partitions or not full_length(model) or len(model['exon']) < 2:
+                continue
+            for side, exon in [('left', model['exon'][0]), ('right', model['exon'][-1])]:
+                kind = terminal_kind(strand, side)
+                inner, outer = (exon[1], exon[0]) if side == 'left' else (exon[0], exon[1])
+                self.raw_terminals[(chromosome, strand, kind, inner)].append((outer, gene, tid))
         for partition in partitions:
             records, multi, single_cds = [], {}, defaultdict(set)
             for tid, model in raw.items():
@@ -547,6 +558,34 @@ class LeapContext:
             )
         return next(iter(metadata)) if metadata else None
 
+    def grouped_annotation_parts(self, source, original, ends):
+        """Added isoform bases already covered by its original eligible splice group.
+
+        Read-support labels do not turn pre-existing annotation into new read
+        sequence. Recorded baselines cap the allowance, and raw full-length
+        multi-exon donors verify coverage; partial/internal exons cannot supply it.
+        """
+        gene, chromosome, strand = source['location']
+        for exon, kind, (genes, annotation, recorded), guard, added in ends:
+            left = (kind == 'FE') == (strand == '+')
+            inner = exon[1] if left else exon[0]
+            old = original['exon'][0 if left else -1]
+            if inner != (old[1] if left else old[0]):
+                continue  # A changed splice site cannot acquire another raw group's allowance.
+            donors = [row for row in self.raw_terminals.get((chromosome, strand, kind, inner), [])
+                      if row[1] in genes]
+            if not donors:
+                continue
+            boundary = (min if left else max)(row[0] for row in donors)
+            if recorded is not None:
+                boundary = max(boundary, recorded) if left else min(boundary, recorded)
+            interval = (max(added[0], boundary), added[1]) if left else (added[0], min(added[1], boundary))
+            if interval[0] > interval[1]:
+                continue
+            supporting = tuple(sorted(row[2] for row in donors if
+                                      (row[0] <= boundary if left else row[0] >= boundary)))
+            yield interval, ('five_prime' if kind == 'FE' else 'three_prime'), boundary, supporting
+
     def source_ends(self, source, original):
         if not source['exon'] or not original['exon']:
             return
@@ -615,10 +654,12 @@ def compare(raw, extended, counts, extension_stats=None, leap_context=None):
         annotation_parts = annotation_extensions(
             source, original, extension_stats.get((chromosome, identifier))
         )
+        source_ends = list(leap_context.source_ends(source, original))
+        grouped_parts = list(leap_context.grouped_annotation_parts(source, original, source_ends))
         added_utrs = list(subtract(source['utr'], original['utr']))
         groups, audit, classified = {}, defaultdict(list), defaultdict(list)
 
-        def add(target_id, kind, rule, overlap, outcome, site='', end=''):
+        def add(target_id, kind, rule, overlap, outcome, site='', end='', boundary='', donors=()):
             group = groups.setdefault(
                 (target_id, kind, rule),
                 dict(
@@ -626,11 +667,17 @@ def compare(raw, extended, counts, extension_stats=None, leap_context=None):
                     splice=[],
                     failing=[],
                     leap=[],
+                    grouped=[],
+                    boundaries=set(),
+                    donors=set(),
                     sites=set(),
                     ends=set(),
                 ),
             )
             group[outcome].append(overlap)
+            if boundary:
+                group['boundaries'].add(boundary)
+            group['donors'].update(donors)
             if site:
                 group['sites'].add(site)
             if end:
@@ -663,6 +710,12 @@ def compare(raw, extended, counts, extension_stats=None, leap_context=None):
                         audit[(target_id, 'CDS')].append(overlap)
                         continue
                     exempt = []
+                    for interval, side, boundary, donors in grouped_parts:
+                        part = (max(overlap[0], interval[0]), min(overlap[1], interval[1]))
+                        if part[0] <= part[1]:
+                            exempt.append(part)
+                            add(target_id, kind, 'within_gene_partial_cds', part, 'grouped',
+                                boundary='{}:{}'.format(side, boundary), donors=donors)
                     for interval, side in annotation_parts:
                         part = (
                             max(overlap[0], interval[0]),
@@ -699,7 +752,7 @@ def compare(raw, extended, counts, extension_stats=None, leap_context=None):
             (genes, annotation, baseline),
             guard,
             added,
-        ) in leap_context.source_ends(source, original):
+        ) in source_ends:
             blockers = [leap_context.blockers[partition]]
             if len(genes) == 1 and genes[0] in leap_context.special[partition]:
                 blockers.append(leap_context.flanks[partition + (kind,)])
@@ -764,10 +817,11 @@ def compare(raw, extended, counts, extension_stats=None, leap_context=None):
                 add(target_id, audit_feature, reason, part, 'leap')
         for (target_id, feature, rule), group in sorted(groups.items()):
             failing = merge(group['failing'])
-            annotation = list(subtract(group['annotation'], failing))
-            splice = list(subtract(group['splice'], failing + annotation))
-            leap = list(subtract(group['leap'], failing + annotation + splice))
-            allowed = merge(annotation + splice + leap)
+            grouped = list(subtract(group['grouped'], failing))
+            annotation = list(subtract(group['annotation'], failing + grouped))
+            splice = list(subtract(group['splice'], failing + grouped + annotation))
+            leap = list(subtract(group['leap'], failing + grouped + annotation + splice))
+            allowed = merge(grouped + annotation + splice + leap)
             same_gene = gene == raw[target_id]['location'][0]
             if failing:
                 status = (
@@ -789,8 +843,10 @@ def compare(raw, extended, counts, extension_stats=None, leap_context=None):
                 )
             elif leap:
                 status = 'allowed_leap_overlap'
-            elif annotation and splice:
+            elif sum(bool(parts) for parts in (grouped, annotation, splice)) > 1:
                 status = 'allowed_multiple_reasons'
+            elif grouped:
+                status = 'allowed_grouped_annotation'
             else:
                 status = (
                     'allowed_current_annotation'
@@ -823,6 +879,9 @@ def compare(raw, extended, counts, extension_stats=None, leap_context=None):
                 annotation_allowed_intervals=format_intervals(annotation),
                 splice_site_allowed_intervals=format_intervals(splice),
                 leap_allowed_intervals=format_intervals(leap),
+                grouped_annotation_allowed_intervals=format_intervals(grouped),
+                grouped_annotation_boundaries=';'.join(sorted(group['boundaries'])),
+                grouped_annotation_donors=';'.join(sorted(group['donors'])),
                 check_rule=rule,
                 gene_relationship='within_gene' if same_gene else 'cross_gene',
                 target_is_partial=str(partial).lower(),
@@ -920,6 +979,7 @@ def main():
             'partial_cds_failures',
             'allowed_shared_splice_site',
             'allowed_current_annotation',
+            'allowed_grouped_annotation',
             'allowed_multiple_reasons',
             'new_cds_overlap',
             'new_within_gene_exon_overlap',

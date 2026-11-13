@@ -96,6 +96,7 @@ TRACKS = [
     ('cross_gene_failures', 'FAIL — cross-gene LEAP rule violation', '#c47415'),
     ('shared_site_allowed', 'PASS — shared internal splice site', '#27804a'),
     ('annotation_allowed', 'PASS — current-annotation extension', '#207e91'),
+    ('grouped_annotation_allowed', 'PASS — existing grouped annotation', '#368c9b'),
     ('leap_allowed', 'AUDIT — exon contacts allowed by LEAP', '#537ca6'),
 ]
 REPORT_COLUMNS = {
@@ -308,6 +309,7 @@ def report_files(paths, outputs, counts, examples, loci):
                     'new_cross_gene_exon_overlap',
                     'allowed_shared_splice_site',
                     'allowed_current_annotation',
+                    'allowed_grouped_annotation',
                     'allowed_multiple_reasons',
                     'allowed_leap_overlap',
                     'new_cross_gene_cds_overlap',
@@ -347,6 +349,7 @@ def report_files(paths, outputs, counts, examples, loci):
                     ]
                 elif row['status'] in (
                     'allowed_current_annotation',
+                    'allowed_grouped_annotation',
                     'allowed_multiple_reasons',
                     'allowed_leap_overlap',
                     'new_cross_gene_cds_overlap',
@@ -359,6 +362,10 @@ def report_files(paths, outputs, counts, examples, loci):
                 else:
                     # Reports from before the provenance exception only allowed shared sites.
                     marker_columns.append(('allowed_intervals', 'shared_site_allowed'))
+                if row['status'] == 'allowed_grouped_annotation' and 'grouped_annotation_allowed_intervals' not in row:
+                    raise ValueError(context + ': grouped-annotation report requires its interval column')
+                if 'grouped_annotation_allowed_intervals' in row:
+                    marker_columns.append(('grouped_annotation_allowed_intervals', 'grouped_annotation_allowed'))
                 if 'leap_allowed_intervals' in row:
                     marker_columns.append(('leap_allowed_intervals', 'leap_allowed'))
                 for column, name in marker_columns:
@@ -395,6 +402,8 @@ def report_files(paths, outputs, counts, examples, loci):
                             'target_is_partial',
                             'target_missing_utr',
                             'intentional_partial_cds_check',
+                            'grouped_annotation_boundaries',
+                            'grouped_annotation_donors',
                         ):
                             values[key] = row.get(key, '')
                         values.update(
@@ -727,7 +736,7 @@ def build(args):
         (staging / 'README.txt').write_text(
             'Open LEAP-overlap-review.jbrowse using Open saved session in JBrowse Desktop.\n'
             'Raw/extended annotations are followed by raw CDS/UTR and datacheck tracks.\n'
-            'Red: same-gene failure. Orange: cross-gene failure. Green: shared-site allowance. Teal: current-annotation allowance. Blue: contacts allowed by LEAP.\n'
+            'Red: same-gene failure. Orange: cross-gene failure. Green: shared-site allowance. Teal: current-annotation allowance. Blue-green: existing grouped annotation. Blue: contacts allowed by LEAP.\n'
             'Click a marker for source/target IDs, splice evidence and annotation-supported ends. Mixed comparisons may have allowed and failing markers.\n'
             'File > Pre-configured sessions offers example locations. review-loci.tsv lists overlap results.\n'
             'Markers follow rule-specific report intervals. CDS clipping includes the original outer boundary; terminal tests require positive-length BED contact.\n'

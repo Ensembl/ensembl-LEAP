@@ -40,6 +40,7 @@ In JBrowse Desktop, choose **Open saved session (.jbrowse) file** and select `LE
 | Extended annotation | Extended structure, with transcript labels and LEAP tags |
 | Raw CDS | Standalone coding segments for comparison |
 | Raw UTR | Original UTR segments |
+| Grouped annotation allowance | Partial-CDS contacts within an existing grouped boundary, with supporting raw donor IDs |
 | Red: same-gene failure | LEAP clipping violation within the source gene, or the intentional partial-CDS failure |
 | Orange: cross-gene failure | LEAP clipping or terminal-safety violation, including CDS hits |
 | Green: shared splice site | An overlap portion allowed by the shared-site exception |

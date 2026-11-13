@@ -22,6 +22,17 @@ class NextflowDatachecksTests(unittest.TestCase):
             gff = inputs/'extended_transcripts/1_positive_extended.gff'
             gff.write_text(gff.read_text().replace('\tgene\t90\t360\t','\tgene\t91\t359\t'))
             (inputs/'partial_protection/1_positive_partial_protection.tsv').write_text('malformed header\n')
+        if scenario == 'read_overlap':
+            raw = inputs/'raw_annotation/current_annotation_1.gff3'
+            text = raw.read_text().replace('\tgene\t100\t350\t', '\tgene\t90\t350\t')
+            attrs = 'gene_id=g_plus;transcript_id=read_blocker.1;transcript_type=protein_coding'
+            for kind,start,end,identifier,parent in (
+                    ('transcript',90,98,'read_blocker.1','g_plus'),
+                    ('exon',90,98,'exon:read_blocker.1','read_blocker.1'),
+                    ('CDS',92,96,'CDS:read_blocker.1','read_blocker.1')):
+                text += '1\ttest\t{}\t{}\t{}\t.\t+\t{}\tID={};Parent={};{}\n'.format(
+                    kind,start,end,'0' if kind=='CDS' else '.',identifier,parent,attrs)
+            raw.write_text(text)
         config = root/'local.config'
         config.write_text("process.executor='local'\nprocess.cpus=1\nprocess.memory='1 GB'\nexecutor.queueSize=6\n"+
                           "singularity.enabled=false\nconda.enabled=false\n")
@@ -62,6 +73,15 @@ class NextflowDatachecksTests(unittest.TestCase):
         self.assertEqual(summary['exit_code'],2)
         self.assertEqual(summary['counts'],{'PASS':16,'FAIL':1,'INPUT_ERROR':1})
         self.assertIn('DATACHECK_GATE',result.stdout+result.stderr)
+
+    def test_new_read_driven_partial_cds_overlap_still_fails_the_workflow(self):
+        result,summary = self.run_workflow('read_overlap')
+        self.assertNotEqual(result.returncode,0)
+        self.assertEqual(summary['exit_code'],1)
+        overlap = next(r for r in summary['results'] if r['strand']=='positive' and r['check']=='cds_overlaps')
+        self.assertEqual(overlap['status'],'FAIL')
+        self.assertEqual(next(r for r in summary['results'] if r['check']=='partial_protection' and r['strand']=='positive')['status'],'FAIL')
+        self.assertEqual(summary['counts'],{'PASS':16,'FAIL':2})
 
     def test_missing_partition_reaches_completeness(self):
         result,summary = self.run_workflow('missing')
