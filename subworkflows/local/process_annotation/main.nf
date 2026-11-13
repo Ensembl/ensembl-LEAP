@@ -58,6 +58,7 @@ workflow PROCESS_ANNOTATION {
     non_protein_coding_regions = FILTER_PARTIAL_TRANSCRIPTS.out.current_annotation_npc_negative.mix(FILTER_PARTIAL_TRANSCRIPTS.out.current_annotation_npc_positive).map { chromosome, strand, file -> ["${chromosome}_${strand}", file] }
     single_exon_gff = SPLIT_TRANSCRIPTS_BASED_ON_EXON_NUMBER.out.single_exon_positive_gff.mix(SPLIT_TRANSCRIPTS_BASED_ON_EXON_NUMBER.out.single_exon_negative_gff).map { chromosome, strand, file -> ["${chromosome}_${strand}", file] }
     partial_annotation = FILTER_PARTIAL_TRANSCRIPTS.out.current_annotation_pt.flatMap { chromosome, file -> [["${chromosome}_positive", file], ["${chromosome}_negative", file]] }
+    raw_annotation = GET_CURRENT_ANNOTATION.out.current_annotation_by_chromosome
 }
 
 /*

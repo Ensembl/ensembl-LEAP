@@ -35,7 +35,7 @@ The build is staged and published only after all input files succeed. Missing ra
 
 Every retained transcript has a stats row, including transcripts restored at both ends. Transcript locations and extension lengths are calculated from the actual processed exon boundaries relative to raw annotation.
 
-A restored end has zero extension, support `none`, and read count `0`. The left end maps to 5′ on `+` and 3′ on `-`; the right end maps the other way. Original support/read counts remain intact for surviving extensions. LEAP tags are removed for ends that no longer extend. `transcript_class` identifies the internal/external classification in the processed transcript records.
+A restored end has zero extension, support `none`, and read count `0`, except an already blacklisted 5′ end: its support and read-count fields remain `blacklisted`, consistently with its retained `LEAP_blacklisted` tag. Blacklisting and internal/external classification are independent; processing does not blacklist additional transcripts. The left end maps to 5′ on `+` and 3′ on `-`; the right end maps the other way. Original support/read counts remain intact for surviving extensions. Extension tags (`LEAP_5` / `LEAP_3`) are removed for ends that no longer extend. `transcript_class` identifies the internal/external classification in the processed transcript records.
 
 For a single-exon transcript, substituting its raw terminal exon restores that entire exon. Both transcript bounds and stats then follow the resulting exon, even if only one side triggered classification; there is no independent second terminal exon to retain.
 

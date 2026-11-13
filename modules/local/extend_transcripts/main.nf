@@ -12,6 +12,9 @@ process EXTEND_TRANSCRIPTS {
         path("${id}_stats.tsv"), emit:extended_transcripts_stats
         tuple val(id), path("${id}_FE_protected.bed"), path("${id}_LE_protected.bed"), emit:protected_extensions
         path("${id}_partial_protection.tsv"), emit:partial_protection_report
+        tuple val(id), path("${id}_extended.gff"), path("${id}_stats.tsv"),
+            path("${id}_FE_protected.bed"), path("${id}_LE_protected.bed"),
+            path("${id}_partial_protection.tsv"), emit: datacheck_outputs
     script:
     """
     protect_partial_extensions.py ${fe} ${le} ${current_annotation} ${partial_annotation} ${natural_overlaps} ${id}

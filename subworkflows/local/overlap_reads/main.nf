@@ -75,7 +75,9 @@ workflow OVERLAP_READS {
     EXTEND_TRANSCRIPTS(FIX_UNSAFE_OVERLAPS.out.fixed_extensions.join(stranded_annotation).join(blacklist_transcripts).join(partial_annotation).join(natural_overlaps))
 
     emit:
-    EXTEND_TRANSCRIPTS.out.extended_transcripts
+    extended_transcripts = EXTEND_TRANSCRIPTS.out.extended_transcripts
+    datacheck_outputs = EXTEND_TRANSCRIPTS.out.datacheck_outputs
+    selected_extensions = FIX_UNSAFE_OVERLAPS.out.fixed_extensions.map { id, fe, le, rejected -> [id, fe, le] }
 }
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -21,6 +21,7 @@ The pipeline is organised around chromosome- and strand-aware processing so larg
 - [Project Structure](#project-structure)
 - [Configuration](#configuration)
 - [Development Notes](#development-notes)
+- [Automatic datachecks](#automatic-datachecks)
 - [License](#license)
 
 ## What LEAP Does
@@ -60,6 +61,7 @@ LEAP expects:
 - polyA sites in BED-like format for 3' validation.
 - Database connection details for the current annotation source.
 - An output directory for published results.
+- A species-matched FASTA `.fai` or chromosome-length file for automatic datachecks, with exact annotation sequence names.
 
 The CAGE and polyA files are split by chromosome and strand using the chromosomes found in the read BAM.
 
@@ -70,6 +72,7 @@ Edit [params.config](/Users/rmerritt/my_app/LEAP/params.config) or provide param
 ```groovy
 params {
     output_directory = "/path/to/leap_results"
+    datacheck_reference_lengths = "/path/to/matching_reference.fa.fai"
 
     reads = "/path/to/long_reads.bam"
     reads_index = "/path/to/long_reads.bam.bai"
@@ -115,6 +118,7 @@ nextflow run main.nf \
   --cage /path/to/cage.bed \
   --polya /path/to/polya.bed \
   --output_directory /path/to/leap_results \
+  --datacheck_reference_lengths /path/to/matching_reference.fa.fai \
   --minimum_read_support 2 \
   --overlap_penalty 10 \
   --extend_on_current_annotation true \
@@ -135,6 +139,8 @@ nextflow run main.nf \
 | `cage` | Yes | CAGE validation data. Used for first-exon/5' extension support. |
 | `polya` | Yes | polyA validation data. Used for last-exon/3' extension support. |
 | `output_directory` | Yes | Directory where selected pipeline outputs are published. |
+| `run_datachecks` | No | Run all nine validation modules automatically; default `true`. |
+| `datacheck_reference_lengths` | When checks enabled | Matching FASTA `.fai` or two-column chromosome-length file; exact sequence names required. |
 | `minimum_read_support` | Yes | Minimum read support passed to read unique-splice-site extraction. |
 | `overlap_penalty` | Yes | Alpha/penalty value passed to unsafe-overlap fixing. |
 | `extend_on_current_annotation` | Yes | Controls whether candidate read extensions may be matched against current annotation. |
@@ -220,6 +226,8 @@ are omitted before applying extensions, so they cannot contribute stats or final
 gene boundaries. See [partial-transcript processing](docs/partial_transcript_processing.md)
 for the protection contract, command, tests and chromosome 12 validation.
 
+The final writer takes each generated gene row's GFF `ID` from its transcripts' gene `Parent`, preserving identifiers such as `_PAR_Y` copies. The stable `gene_id` attribute and all transcript/child IDs and Parent links are unchanged. Gene bounds are grouped by this GFF parent identity. Legacy direct inputs lacking `Parent` retain the previous `gene_id` fallback; empty or multiple gene Parents are rejected.
+
 A more detailed workflow diagram is available in [BIOINFORMATICS_FLOWCHART.md](/Users/rmerritt/my_app/LEAP/BIOINFORMATICS_FLOWCHART.md).
 
 ## Outputs
@@ -232,6 +240,7 @@ Selected outputs are published under `params.output_directory`.
 | `natural_overlaps/` | Existing annotation overlaps that are treated as natural/known overlaps. |
 | `extension_safety/` | Safety-check outputs, including safe and unsafe extension BED files. |
 | `unsafe_overlaps/` | Rejected unsafe overlaps, named like `<chromosome>_<strand>_rejected.bed`. |
+| `datachecks/` | Per-check CSVs, logs and statuses, plus combined HTML/CSV/JSON summaries and final verdict. |
 | `fixed_extensions_before_partial_protection/` | Original selected first/last-exon candidates before the added partial checks. |
 | `fixed_extensions/` | Final first/last-exon candidates after protection; these correspond to the final GFF and stats. |
 | `partial_protection/` | TSV audit of shortened candidates, original endpoints, annotation fallback and blocking partial features. |
@@ -278,6 +287,25 @@ The [conf/ebi_slurm.config](/Users/rmerritt/my_app/LEAP/conf/ebi_slurm.config) p
 - Scripts in `assets` provide additional checking, filtering, and output-combination utilities.
 - Keep module outputs keyed by chromosome, strand, and exon type when adding new steps; downstream joins depend on those keys.
 
+## Automatic datachecks
+
+All nine datachecks now run automatically on standard LEAP outputs. Supply the matching reference lengths when launching LEAP:
+
+```bash
+nextflow run main.nf -profile hpc_slurm \
+  --datacheck_reference_lengths /path/to/matching_reference.fa.fai
+```
+
+A two-column chromosome-length file is also accepted, including gzip. Names must match exactly: `1` and `chr1` are distinct. The reference parameter is required while checks are enabled and is validated before production tasks are submitted. Set `--run_datachecks false` only to explicitly disable automatic validation; the default is `true`.
+
+Each chromosome/strand gets separate boundary, internal-exon, complete-preservation, stats/GFF, structural-integrity, completeness, partial-protection, reference-coordinate and CDS/UTR-overlap tasks. Inputs come directly from declared workflow channels, independently of asynchronous published copies. Expected partitions come from the chromosomes selected from the read BAM, with both strands required. Missing output partitions therefore reach completeness rather than disappearing through joins.
+
+Results are saved under `datachecks/<chromosome>_<strand>_<check>/`: `report.csv`, `stdout.txt`, `stderr.txt` and a uniquely named `.status.json`. The combined `datachecks/summary/summary.html`, `summary.csv` and `summary.json` distinguish `PASS`, `FAIL`, `INPUT_ERROR` and `NOT_APPLICABLE`. All checks finish and their reports and summary are published before the final gate marks LEAP as failed. Input errors remain distinct from biological failures. Missing/duplicate/unexpected result records and unexpected workflow scopes also fail validation. Checks retain their existing rules, including the stricter partial-CDS findings within original grouped annotation boundaries.
+
+For valid empty partitions, completeness and the partial-protection and reference checks still run. Comparison/structural checks are marked `NOT_APPLICABLE` only after a scoped completeness preflight confirms zero eligible transcripts, empty final GFF and no stats models. Missing eligible output or malformed inputs are never hidden as an empty-partition pass. The reference check covers both the published raw annotation and final GFF. The stats/GFF check always receives selected-candidate provenance. Internal-extension processing remains standalone; the automatic suite checks the standard LEAP output stage.
+
+The new modules require only Python 3 on the execution environment. Annotation, evidence and extension-selection logic are unchanged. Existing standalone commands below remain available. See [the integration guide](docs/datachecks.md) for workflow wiring, output meanings and real Nextflow smoke tests.
+
 ## Transcript boundary datacheck
 
 Run the standalone check on a raw annotation and its corresponding extended annotation:
@@ -292,7 +320,7 @@ The CSV includes all IDs from both inputs, both sets of chromosome, strand, star
 
 The console reports a pass/fail result and counts for every status. Missing transcripts are reported separately and do not fail the check, since raw annotations may contain transcripts filtered before extension. A chromosome-wide raw file can therefore be compared with a strand-specific extended file.
 
-Exit codes are `0` for pass, `1` for shortened transcripts or chromosome/strand mismatches, and `2` for input or execution errors. Invalid transcript records, missing or duplicate IDs, invalid coordinates and files without transcript records are rejected. This script is not yet integrated into Nextflow.
+Exit codes are `0` for pass, `1` for shortened transcripts or chromosome/strand mismatches, and `2` for input or execution errors. Invalid transcript records, missing or duplicate IDs, invalid coordinates and files without transcript records are rejected. This script also runs through the automatic datacheck module above.
 
 Run the focused tests with `python3 -m unittest discover -s tests`.
 
@@ -306,9 +334,132 @@ This standalone, standard-library check accepts plain or gzipped GFF3 and matche
 
 The CSV contains one row per transcript ID, both chromosome/strand values, exon counts and semicolon-separated `start-end` exon lists. Status is `unchanged_internal_structure`, `changed_boundaries`, `exon_count_mismatch`, `location_mismatch`, `missing_from_extended` or `missing_from_raw`. Status precedence is location mismatch, exon-count mismatch, then changed boundaries. Independent mismatch flags retain simultaneous failures. Boundary details use one-based genomic exon positions, for example `exon_2_start:200->201`; these positions run from low to high coordinates on either strand. Boundary flags and details are blank when exon counts differ, because pairing would be ambiguous. Missing annotation values and unmatched-transcript flags are blank.
 
-The console reports status counts, independent failure-flag counts and the number of failing transcripts (counted once each). Missing transcripts are reported without failing, allowing chromosome-wide raw files to be compared with strand-specific outputs. Exit codes are `0` for pass, `1` for structural or location failures, and `2` for input/output errors. The check rejects malformed transcript/exon records, missing IDs, duplicate transcripts, invalid or overlapping exon intervals, exons outside their transcript interval, inconsistent exon chromosome/strand, orphan exons and transcripts without exons. Exons may precede transcript records. The report cannot overwrite either input. No Nextflow integration is included.
+The console reports status counts, independent failure-flag counts and the number of failing transcripts (counted once each). Missing transcripts are reported without failing, allowing chromosome-wide raw files to be compared with strand-specific outputs. Exit codes are `0` for pass, `1` for structural or location failures, and `2` for input/output errors. The check rejects malformed transcript/exon records, missing IDs, duplicate transcripts, invalid or overlapping exon intervals, exons outside their transcript interval, inconsistent exon chromosome/strand, orphan exons and transcripts without exons. Exons may precede transcript records. The report cannot overwrite either input. It also runs through the automatic datacheck module above.
 
 Run both datachecks' automated tests with `python3 -m unittest discover -s tests`.
+
+## Complete transcript preservation datacheck
+
+```bash
+python3 assets/check_transcript_preservation.py current_annotation_1.gff3 1_positive_extended.gff preservation.csv
+```
+
+This standalone, standard-library check accepts plain or gzipped pipeline GFF3 and matches exact versioned `transcript_id` values. It checks every transcript-associated feature, including internal and terminal exons, CDS, start/stop codons, UTRs and unfamiliar feature types. All original feature types, counts, coordinates, chromosome, strand, source, score, phase and attributes must be preserved. This includes feature IDs, `Parent`, gene membership, exon IDs and exon numbers. Only the LEAP-generated attributes `leap_tag` and `transcript_class` are excluded from comparison. Record order, attribute order, headers and gene rows are not compared; ordinary attribute values are compared exactly.
+
+Only outward changes to the transcript span, the lowest-coordinate exon's start and the highest-coordinate exon's end are permitted. This also applies to single-exon transcripts. Corresponding terminal UTR features must follow those outer boundaries, using the correct 5′/3′ interpretation on each strand. Internal UTR segments and UTR boundaries facing CDS cannot move. For noncoding models without UTR features, exon/transcript extension alone is valid. Conceptually removing only these permitted terminal additions must recover the complete original feature collection. New features, including features wholly within added sequence, are failures; no records are silently deduplicated. Transcript bounds must agree with the outer exon bounds.
+
+The CSV contains one row per ID with status `unchanged`, `extended`, `changed_features`, `missing_from_extended` or `missing_from_raw`, a `failed` flag, both annotations' locations and JSON feature-type counts. Independent flags identify location mismatches, shortening, feature-count changes, inconsistent extensions and differences in complete feature records. `extension_details` is a JSON list explaining transcript/exon/UTR inconsistencies. `feature_differences` is a JSON object containing original-only records, extended-only records after removing permitted additions, and actual extended records for affected feature types; records include coordinates, attributes, source, score and phase. These details avoid ambiguous pairing when IDs or feature counts change.
+
+Raw transcripts omitted from output are reported without failing because LEAP filters annotations. An output transcript absent from raw **does fail**, including a changed version suffix. A chromosome-wide raw file can be compared with a strand-specific output; raw transcripts on the other strand are non-failing unmatched records. Summary counts and independent flag counts are printed. Exit codes are `0` for pass, `1` for preservation failures or unexpected output IDs, and `2` for input/output errors.
+
+Input validation requires `transcript_id` and `gene_id` on transcript-associated records and rejects malformed records, duplicate transcript/feature records, invalid coordinates, scores or phases, inconsistent locations/gene IDs, overlapping exons, children without transcript records, unresolved child `Parent` references, features outside their transcript, CDS/codon/UTR features without a containing exon, and transcripts without exons. Children may precede transcripts. Both inputs are validated before opening the report, and reports cannot overwrite either input, including through symbolic or hard links. Invalid unmatched raw models remain input errors rather than being silently filtered out.
+
+This check includes the preservation rules covered by the boundary and internal-exon checks and adds complete feature/metadata comparison; those existing scripts remain available unchanged. It does not replace the overlap datacheck, validate extension evidence, or compare gene-row bounds. It also runs through the automatic datacheck module above. Run its focused tests with `python3 -m unittest discover -s tests -p test_check_transcript_preservation.py`.
+
+## Stats and GFF consistency datacheck
+
+```bash
+python3 assets/check_stats_gff_consistency.py current_annotation_1.gff3 1_positive_extended.gff stats_comparison.csv \
+  --extension-stats 1_positive_stats.tsv \
+  --leap-output-dir /path/to/leap_run
+```
+
+This standalone, standard-library check compares final transcript/exon coordinates, the corresponding stats and transcript `leap_tag` values. It accepts plain/gzipped GFF3 and TSV, plus a stats directory containing only the files corresponding to the checked final annotation. Exact versioned IDs are keyed by chromosome, so X/Y PAR copies remain distinct. Every final transcript must have a raw counterpart and exactly one stats row. Extra stats rows and unexpected output IDs fail; raw models intentionally absent from output are non-failing. The final transcript span must equal its outer exon boundaries; stats locations and gene IDs must agree with the GFF, and chromosome/strand/gene changes or inward boundaries fail. Raw coordinates come from transcript records; validating unrelated raw child features is left to the preservation check.
+
+The expected 5′ extension is `raw_start - final_start` on `+` and `final_end - raw_end` on `-`; 3′ uses the opposite end. These are added-base counts, without an extra `+1`. A nonzero extension requires `reads` and/or `current_annotation` support. Read-supported entries require a positive count. Annotation-supported entries can have **zero or nonzero** counts: LEAP reports reads supporting the splice site, not necessarily reads supplying that endpoint. Aligned comma-separated support/read-count lists are supported and validated in order. A zero-extension end requires support `none` and count `0`, except blacklisted 5′ ends, which require zero extension, support `blacklisted` and literal read-count value `blacklisted`. Blacklisting is invalid at 3′. `LEAP_5` and `LEAP_3` must reflect actual extensions; `LEAP_blacklisted` must match the stats blacklist declaration; `LEAP_none` is used only when no other tag applies. Tag order is ignored; missing, unknown, duplicate and contradictory tags fail.
+
+`--extension-stats` is required. Optional `--leap-output-dir` verifies nonzero ends against the original run's `fixed_extensions/`: endpoint, gene group, support category and splice-site read count must match the selected FE/LE record. This replays the final writer's ordered **last-record-per-splice-site** lookup, including coincident annotation/read candidates; it does not use the overlap check's stricter ambiguity rejection. Candidate fields are used as written by LEAP without a BED/GFF offset conversion. Missing/ambiguous candidate files or malformed records are input errors. With processed GFFs, supply **processed stats** and the original run directory: zero/restored ends are checked for cleared support/counts/tags, while surviving extensions retain their original candidate provenance. Without run context, syntax and internal consistency are checked, but support origins and exact numeric read counts cannot be established from a GFF alone. This check does not recount BAM reads or independently establish blacklist membership or annotation-donor eligibility.
+
+The CSV includes all raw/final/stats keys, status (`consistent`, `inconsistent`, `missing_from_extended`), both GFF locations, reported and expected lengths, support/counts, observed/expected tags, independent mismatch flags and JSON `details` explaining each discrepancy. `candidate_provenance_checked` identifies rows where a nonzero end was checked against candidates. Summary counts and flag counts are printed; exit codes are `0` for pass, `1` for inconsistencies and `2` for malformed inputs or execution errors. Duplicated stats keys/columns, missing required fields, malformed integers/support lists, malformed GFF records, duplicate transcript records, orphan/missing/overlapping final exons and missing context files are rejected. Inputs are loaded before opening the report, which cannot overwrite annotations, stats or candidates, including through links.
+
+The standalone rules and production LEAP logic are unchanged; automatic execution is provided by the datacheck subworkflow above. Run focused tests with `python3 -m unittest discover -s tests -p test_check_stats_gff_consistency.py`.
+
+## GFF structural integrity datacheck
+
+```bash
+python3 assets/check_gff_structural_integrity.py 1_positive_extended.gff structural_issues.csv
+```
+
+This standalone standard-library check inspects one plain/gzipped GFF3 without requiring raw annotation or stats. It resolves the actual `ID` / `Parent` graph, independently of file order, and checks the gene → transcript/mRNA → child hierarchy. Gene and transcript IDs must identify single records. Leaf IDs are optional; compatible multi-part features such as CDS, UTRs and split codons may share an ID, including varying CDS phases and exon annotations. Exact duplicate records, conflicting ID reuse, duplicate Parent references, missing/unresolved/ambiguous parents and parent cycles fail. CDS segments are not rejected solely for overlap: programmed frameshifts can use overlapping CDS records. GFF IDs have file-wide scope; merged annotations must disambiguate colliding IDs, including PAR copies. Ordinary `exon_id` attributes may be shared and are not treated as global GFF IDs. Percent-encoded IDs are decoded when resolving links, with Parent lists split before decoding.
+
+Each transcript/mRNA must have one gene Parent and at least one exon. Exons must have transcript/mRNA parents and must not overlap within a transcript. CDS, codon and UTR segments must have a transcript ancestor and lie within an exon of **each** associated transcript. Shared exons and other multiple-parent features are supported; every declared Parent must resolve. Nested unfamiliar features are checked through their ancestry. `gene_id` / `transcript_id` attributes, when supplied, must agree with the resolved gene/transcript metadata; these attributes are not substituted for missing GFF IDs or Parent links. Genes without transcript descendants also fail in this LEAP annotation profile.
+
+Every child must have the same chromosome and strand as its parent and fit inside the parent's interval(s). The check also verifies containment in all ancestor transcript and gene bounds, so a misplaced descendant is reported even through an intermediate feature. For discontinuous parents, a child cannot span a gap between parent segments. Parent bounds may include margins: this check requires containment, not exact equality to the child union. Containment, root genes and single-gene transcript parents are requirements of this LEAP annotation profile, rather than rules for every possible GFF3 ontology feature. The stats/GFF consistency check separately enforces LEAP's exact transcript/exon spans. Numeric coordinates, scores, strand and phase syntax are validated; CDS records without numeric phase are reported as structural failures. Headers and embedded FASTA are not validated, and this is not a full Sequence Ontology, reference-length or translation validator. ID/Parent handling follows the [Sequence Ontology GFF3 specification](https://github.com/The-Sequence-Ontology/Specifications/blob/master/gff3.md).
+
+Internally processed outputs deliberately omit gene rows. Check those with the explicit option:
+
+```bash
+python3 assets/check_gff_structural_integrity.py processed/1_positive_extended.gff structural_issues.csv --allow-missing-genes
+```
+
+This option allows unresolved single gene Parents on transcript/mRNA records **only when the entire file has no gene rows**. All transcript/child links, exon structure and transcript containment remain required. It does not excuse a partially missing set of genes. Conflicting `gene_id` declarations for a shared omitted gene Parent still fail. The console reports `gene_boundaries_checked: False` and the number of omitted gene-parent checks; gene containment cannot be verified without gene records. No gene boundaries are inferred or repaired.
+
+The CSV contains one row per structural issue: issue code, source line, feature type/ID, transcript/gene attributes, chromosome, coordinates, strand, relevant parent ID and JSON diagnostic details. A passing report contains only its header. The console reports parsed record/model counts, issue counts and gene-check coverage. Structural violations return `1`; a valid annotation returns `0`; malformed/unreadable/empty input or execution errors return `2`. Syntax errors are diagnosed before opening the report. Reports cannot overwrite the input, including through symbolic/hard links. Structural problems such as an exonless transcript are reported while the remaining readable records are still evaluated. Files without transcript/mRNA records are input errors.
+
+Existing checks and production code remain unchanged; automatic execution is provided by the datacheck subworkflow above. Run focused tests with `python3 -m unittest discover -s tests -p test_check_gff_structural_integrity.py`.
+
+## Output completeness datacheck
+
+Check a complete run with an explicit chromosome selection:
+
+```bash
+python3 assets/check_output_completeness.py run/raw_annotation run/extended_transcripts completeness.csv \
+  --extension-stats run/extended_transcripts_stats --chromosomes 1 2 3 X Y
+```
+
+Directory comparisons default to both strands. Use `--strand positive` or `negative` to select one strand. Single-file comparisons require exactly one chromosome and an explicit strand:
+
+```bash
+python3 assets/check_output_completeness.py current_annotation_Y.gff3 Y_positive_extended.gff Y_completeness.csv \
+  --extension-stats Y_positive_stats.tsv --chromosomes Y --strand positive
+```
+
+This standalone standard-library check derives eligibility independently from the supplied published raw annotation, after upstream OTT/readthrough filtering. Every `protein_coding` transcript with both `five_prime_UTR` and `three_prime_UTR` features and more than one exon must occur in **both** final GFF and stats. Noncoding, partial and single-exon models are expected exclusions, with explicit reasons. Blacklisting, lack of reads, rejected candidates and zero extension do not excuse missing eligible models. Internal classification alone never excludes a model. Use `--stage processed` for internally processed output: this additionally excludes otherwise eligible models without CDS, matching the processor. The default `--stage leap` does not require CDS.
+
+Identity is the exact versioned `transcript_id`, chromosome and strand. GFF primary IDs, including `_PAR_Y`, are retained as evidence and are not substituted for stable transcript IDs. Raw records outside the selected scope are ignored; final GFF/stats records outside the selected scope or placed in the wrong chromosome/strand file fail. Stats have no strand column, so their file slot supplies the strand. This checks downstream completeness against current eligibility rules, not database-export completeness or historical-release inclusion policy.
+
+Use three corresponding files or three directories. Inputs accept plain/gzipped files. Directory slots require exactly one `current_annotation_<chromosome>.gff3` (also `.gff`), `<chromosome>_<positive|negative>_extended.gff` (also `.gff3`) and `<chromosome>_<positive|negative>_stats.tsv`, with optional `.gz` suffixes. Missing selected files fail even for zero-eligible partitions; multiple files matching a slot are input errors. Existing output directories may be empty. Empty final GFFs and header-only stats pass only when the scope has no eligible models. Empty/unclassifiable raw annotation is an input error; a valid chromosome raw file containing only opposite-strand models can establish a zero-eligible selected strand.
+
+The CSV combines one row per chromosome/strand/transcript identity with file findings. It records eligibility, exclusion reasons, independent GFF/stats presence, raw feature counts, GFF primary IDs, paths and explanations. Statuses include `retained`, `expected_exclusion`, `missing_expected`, `unexpected_retained`, `outside_selected_scope`, `raw_unavailable`, missing-file statuses and misplaced-file findings. Missing raw files leave membership explicitly unverifiable. Console counts include expected retention, actual membership, statuses and exclusion reasons; exclusion reasons can overlap. File findings and transcript failures are counted separately.
+
+Exit codes are `0` for agreement, `1` for missing/unexpected models or required files, and `2` for malformed, unreadable or ambiguous inputs. Malformed records, missing/conflicting classification metadata, missing IDs, duplicate transcripts/features/stats, orphan children, exonless transcripts, overlapping exons, invalid intervals and misplaced child intervals are input errors. Raw gene rows are outside transcript eligibility. This does not replace the structural, preservation or stats/GFF datachecks: support values and feature preservation are their responsibility. Inputs are validated before the report is opened, and overwrite protection includes symbolic and hard links. Production logic and existing checks remain unchanged; automatic execution is provided by the datacheck subworkflow above.
+
+Run focused tests with `python3 -m unittest discover -s tests -p test_check_output_completeness.py`.
+
+## Partial-protection audit datacheck
+
+```bash
+python3 assets/check_partial_protection.py /path/to/leap_run protection_comparison.csv \
+  --chromosomes 1 2 X Y --strand both
+```
+
+This standalone standard-library audit compares original selected candidates with protected candidates, rather than only inspecting the final GFF. Chromosomes are required; `--strand` is `positive`, `negative` or `both` (default). Each selected chromosome/strand requires its published `raw_annotation/`, original FE/LE BEDs in `fixed_extensions_before_partial_protection/`, final FE/LE BEDs in `fixed_extensions/`, `natural_overlaps/<chromosome>_<strand>_NO.txt` and `partial_protection/<chromosome>_<strand>_partial_protection.tsv`. Existing pipeline filename prefixes are accepted. Each slot must have exactly one file, including plain/gzip alternatives. Missing or ambiguous context is an input error, so runs made before protection-stage context was published cannot be marked as passing.
+
+The check independently classifies published raw models and derives the expected transition without importing or invoking production protection code. Full-length multi-exon protein-coding models determine original single-CDS-gene eligibility; partial protein-coding models supply additional CDS, applicable single-CDS-gene exon flanks, opposite-terminal and single-exon obstacles. Terminal checks preserve LEAP's shared-gene and ordered zipped natural-pair allowances. CDS/flank contacts include the annotation boundary; terminal contacts require positive-length overlap. Exon encounter order preserves the production FE/LE identity, including on the negative strand. This does not introduce blanket protection of every partial exon.
+
+Read candidates may stay unchanged, use an existing shorter safe alternative in its recorded selection order, or return to the original grouped annotation fallback. Stale longer alternatives cannot be revived; no new endpoint may be invented. The fallback remains permitted even if that original annotation boundary contacts a partial feature. Annotation-only and single-exon context rows stay unchanged. Splice sites, ordered gene groups, splice-site read counts and other protected fields must remain identical; only the endpoint and permitted alternative-list/count updates may change. Candidate fallback retains its splice-site count; final GFF/stats support clearing remains the separate stats/GFF check's responsibility.
+
+Candidate order and multiplicity are significant, because the writer uses the last record for a splice site. Legitimate duplicate rows are retained and compared by one-based record position. Unchanged records must also retain their original text, including line endings. Recorded audit rows must agree with independently derived outcomes and blocker details, including multiplicity; audit row order and blocker-list order may differ. Missing, extra or incorrect audit claims fail.
+
+The CSV includes every original candidate, extra output candidates and audit/file findings, with original/expected/actual endpoints and BED fields, annotation fallback, outcome, blocker evidence, source paths and independent flags. Statuses include `unchanged`, `shorter_read_candidate`, `annotation_fallback`, `invalid_transition`, missing/extra candidates, `candidate_order_mismatch`, `missing_audit` and `unexpected_audit`. Console counts distinguish candidate failures, audit findings and file findings; several flags can describe one candidate. Passing requires agreement at both candidate and audit levels.
+
+Exit codes are `0` for pass, `1` for transition/evidence violations and `2` for missing, malformed, unreadable or ambiguous inputs or execution errors. Invalid raw classification/location metadata, duplicate transcripts, orphan children, exonless models, invalid/overlapping exons and malformed BED/audit/natural-pair files are rejected. Raw records outside the selected chromosome/strand scope are ignored. A temporary report is assembled before opening the destination, so input errors preserve any existing report. Overwrite protection includes symbolic and hard links. The standalone rules and production code remain unchanged; automatic execution is provided by the datacheck subworkflow above.
+
+Run focused tests with `python3 -m unittest discover -s tests -p test_check_partial_protection.py`.
+
+## Reference-coordinate validity datacheck
+
+```bash
+python3 assets/check_reference_coordinates.py /path/to/run/extended_transcripts GRCh38.fa.fai coordinate_issues.csv
+```
+
+The first argument is a GFF/GFF3 file or a directory of immediate GFF/GFF3 files; gzip inputs are supported. Directory mode rejects ambiguous plain/gzip or GFF/GFF3 copies with the same basename. The second argument is an explicit five-column FASTA index (`.fai`) or two-column sequence-name/length file, optionally gzipped. Reference names must be unique and lengths positive. Chromosome names must match **exactly**: `1` and `chr1` are different names, with no automatic aliasing. The reference must contain every sequence used by the checked annotation.
+
+Every feature type, including genes and unfamiliar features, must satisfy `1 <= start <= end <= reference_length`. Unknown chromosome names, coordinates before position 1, reversed intervals and coordinates beyond sequence ends fail. The CSV contains one row per violating feature with all applicable issue codes, path, line, feature/transcript/gene identifiers when present, chromosome, strand, coordinates, reference length and explanation. A passing report has only its header. Console counts include files, total features, violating features and independent issue counts.
+
+Exit codes are `0` for pass, `1` for unknown sequence names or coordinate-range violations, and `2` for malformed/unreadable/ambiguous input or execution errors. Noninteger coordinates, malformed GFF columns/attributes/score/strand/phase, invalid index entries, duplicate reference names and empty reference files are input errors. Empty/header-only GFFs are accepted; missing eligible content is the completeness check's responsibility. Headers are skipped, and parsing stops at embedded FASTA. This check does not validate hierarchy, sequence content, reference assembly identity or index byte offsets against an actual FASTA. Matching length/name tables must be supplied for the intended assembly. Existing reports remain untouched on input errors, and input overwrite protection includes symbolic and hard links.
+
+Run focused tests with `python3 -m unittest discover -s tests -p test_check_reference_coordinates.py`.
 
 ## Added UTR overlap datacheck
 
@@ -337,7 +488,7 @@ The CSV has one row per source/target, target-feature type and rule. `check_rule
 
 Stats accept a TSV file/directory, plain or gzipped. Gene, transcript location and extension lengths must match the checked annotation; stale or conflicting stats are rejected before the report is opened. Missing entries grant no within-gene annotation allowance. Only same-chromosome, same-strand contacts count. Self-comparisons are excluded. The parser checks IDs, locations, containing exons and intervals; duplicate intervals are deduplicated and overlapping distinct exons rejected. Unrelated transcript-only raw records are accepted. Reports cannot overwrite annotations, stats or required run-context files.
 
-Exit codes are `0` for pass, `1` for biological failures and `2` for input/output errors. The console reports `leap_rule_failures` and `partial_cds_failures` separately, as well as evaluated UTR transcripts and report rows by outcome. Production LEAP, internal-extension processing and Nextflow integration are unchanged. Inspectable examples, including all seven retained within-gene partial-CDS failures, are in [tests/data/leap_cross_gene](tests/data/leap_cross_gene/README.md). Earlier within-gene examples remain in [tests/data/cds_overlaps](tests/data/cds_overlaps/README.md). See [the LEAP overlap-rule contract](docs/leap_overlap_rules.md) for the source mapping and intentional exception. Run `python3 -m unittest discover -s tests` for regression and production-predicate parity checks.
+Exit codes are `0` for pass, `1` for biological failures and `2` for input/output errors. The console reports `leap_rule_failures` and `partial_cds_failures` separately, as well as evaluated UTR transcripts and report rows by outcome. Production extension rules and standalone internal-extension processing are unchanged; this check now also runs automatically in Nextflow. Inspectable examples, including all seven retained within-gene partial-CDS failures, are in [tests/data/leap_cross_gene](tests/data/leap_cross_gene/README.md). Earlier within-gene examples remain in [tests/data/cds_overlaps](tests/data/cds_overlaps/README.md). See [the LEAP overlap-rule contract](docs/leap_overlap_rules.md) for the source mapping and intentional exception. Run `python3 -m unittest discover -s tests` for regression and production-predicate parity checks.
 
 ## Internal-extension processing asset
 
@@ -345,7 +496,7 @@ Exit codes are `0` for pass, `1` for biological failures and `2` for input/outpu
 python3 assets/process_internal_extensions.py /path/to/leap_run /path/to/new_processed_run
 ```
 
-This standalone asset brings LEAP2GO's existing internal/external classification into LEAP without changing the Nextflow workflow. It restores internal terminal exons from raw annotation, saves original candidates separately, and writes strand-correct extension stats, including zero-extension rows for fully restored transcripts. Transcripts without CDS are excluded as before. It requires only Python's standard library and local `sort`, and leaves input files untouched.
+This standalone asset brings LEAP2GO's existing internal/external classification into LEAP without changing the Nextflow workflow. It restores internal terminal exons from raw annotation, saves original candidates separately, and writes strand-correct extension stats, including zero-extension rows for fully restored transcripts. Already blacklisted 5′ ends retain support/read-count values `blacklisted` and their `LEAP_blacklisted` tag; other restored ends use `none / 0`. Internal classification does not create new blacklist entries. Transcripts without CDS are excluded as before. It requires only Python's standard library and local `sort`, and leaves input files untouched.
 
 See [the processing guide](docs/internal_extension_processing.md) for classification rules, output layout and the subsequent datacheck/JBrowse workflow. Small positive/negative-strand examples are in `tests/data/internal_extensions/`.
 

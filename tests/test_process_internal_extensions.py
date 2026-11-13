@@ -22,10 +22,68 @@ def load(name, path):
 
 process = load('process_internal', SCRIPT)
 check = load('overlap_check', ROOT / 'assets/check_cds_overlaps.py')
+stats_check = load('stats_gff_check', ROOT / 'assets/check_stats_gff_consistency.py')
 
 
 @unittest.skipUnless(shutil.which('sort'), 'requires sort')
 class InternalProcessingTests(unittest.TestCase):
+    def test_existing_blacklist_survives_either_or_both_ends_restoring(self):
+        for name, expected in json.loads((DATA / 'expected.json').read_text()).items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                source, output = Path(directory) / 'input', Path(directory) / 'processed'
+                shutil.copytree(DATA / name, source)
+                sign = expected['strand']
+                raw_path = source / 'raw_annotation/current_annotation_1.gff3'
+                extended_path = source / 'extended_transcripts' / ('1_' + sign + '_extended.gff')
+                stats_path = source / 'extended_transcripts_stats' / ('1_' + sign + '_stats.tsv')
+                original = check.read_annotation(raw_path)['source.1']
+                extended = check.read_annotation(extended_path)['source.1']
+                # A blacklisted 5' end is already at raw; the 3' end may extend.
+                left = sign == 'positive'
+                column = 3 if left else 4
+                old_outer = extended['exon'][0][0] if left else extended['exon'][-1][1]
+                raw_outer = original['exon'][0][0] if left else original['exon'][-1][1]
+                rows = []
+                for fields, attrs, context in process.records(extended_path):
+                    if attrs.get('transcript_id') == 'source.1':
+                        if int(fields[column]) == old_outer:
+                            fields[column] = str(raw_outer)
+                        if fields[2] == 'transcript':
+                            attrs['leap_tag'] = 'LEAP_blacklisted,LEAP_3'
+                    rows.append(process.serialize(fields, attrs))
+                extended_path.write_text(''.join(rows))
+                entries = process.load_stats(stats_path)
+                entry = entries['source.1']
+                source_model = check.read_annotation(extended_path)['source.1']
+                entry.update(five_prime_extension='0', five_prime_support='blacklisted',
+                             five_prime_read_count='blacklisted',
+                             transcript_location='1:{}-{}'.format(source_model['exon'][0][0], source_model['exon'][-1][1]))
+                with stats_path.open('w', newline='') as handle:
+                    writer = csv.DictWriter(handle, fieldnames=process.STATS_FIELDS, delimiter='\t')
+                    writer.writeheader();writer.writerows(entries.values())
+                before = {str(p):p.read_bytes() for p in source.rglob('*') if p.is_file()}
+                result = subprocess.run([sys.executable, str(SCRIPT), str(source), str(output)], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                folder = output / 'external_extensions'
+                after_stats = check.read_extension_stats(folder / 'stats')
+                row = after_stats[('1', 'source.1')]
+                self.assertEqual(row['five_prime_extension'], 0)
+                self.assertEqual(row['five_prime_support'], 'blacklisted')
+                self.assertEqual(row['five_prime_read_count'], 'blacklisted')
+                three_restored = expected['restore_right'] if left else expected['restore_left']
+                self.assertEqual(row['three_prime_extension'], 0 if three_restored else 50)
+                self.assertEqual(row['three_prime_support'], 'none' if three_restored else 'reads')
+                self.assertEqual(row['three_prime_read_count'], '0' if three_restored else '3')
+                final_path = folder / 'gff' / extended_path.name
+                tx = next(attrs for fields,attrs,context in process.records(final_path)
+                          if fields[2]=='transcript' and attrs.get('transcript_id')=='source.1')
+                self.assertIn('LEAP_blacklisted', tx['leap_tag'].split(','))
+                self.assertEqual('LEAP_3' in tx['leap_tag'].split(','), not three_restored)
+                compared = list(stats_check.compare(stats_check.read_annotation(raw_path),
+                    stats_check.read_annotation(final_path, include_exons=True), stats_check.read_stats(folder / 'stats')))
+                self.assertTrue(all(not r['failed'] for r in compared), compared)
+                self.assertEqual({str(p):p.read_bytes() for p in source.rglob('*') if p.is_file()}, before)
+
     def test_all_fixture_strands_and_stats(self):
         for name, expected in json.loads((DATA / 'expected.json').read_text()).items():
             with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:

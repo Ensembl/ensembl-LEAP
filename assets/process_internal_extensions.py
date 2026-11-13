@@ -219,7 +219,10 @@ def prepare_models(models, raw, stats):
             if restored or final != previous:
                 if length:
                     raise ValueError('Cannot infer support for changed extension: ' + identifier)
-                row[prime + '_support'], row[prime + '_read_count'] = 'none', '0'
+                # Internal/external classification does not change an existing
+                # 5' blacklist declaration, even when that end is restored.
+                if not (prime == 'five_prime' and row[prime + '_support'] == 'blacklisted'):
+                    row[prime + '_support'], row[prime + '_read_count'] = 'none', '0'
             if not length:
                 tag = 'LEAP_5' if prime == 'five_prime' else 'LEAP_3'
                 tags = [value for value in tags if value != tag]
