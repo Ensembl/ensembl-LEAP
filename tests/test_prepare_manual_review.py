@@ -85,6 +85,7 @@ class ManualReviewTests(unittest.TestCase):
         self.assertIn('transcript_class=internal_left', transcript('internal')[8])
         self.assertNotIn('utr_only.1', (output / 'annotations/external/positive.gff3').read_text())
         self.assertEqual({p: p.read_bytes() for p in source.rglob('*') if p.is_file()}, before)
+        self.assertEqual(json.loads((output / 'review-summary.json').read_text())['read_evidence']['status'], 'not_supplied')
         with (output / 'samplesheet.csv').open() as handle:
             rows = list(csv.DictReader(handle))
         self.assertEqual(len(rows), 13)

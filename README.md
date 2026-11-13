@@ -336,6 +336,8 @@ LEAP now prepares `manual_review/` automatically, with raw, original LEAP, proce
 
 Supply `--review_reference /server/reference/genome.fa` (or a gzipped FASTA/2bit), alongside the matching `--datacheck_reference_lengths`. Set `--review_jbrowser_pipeline`, `--review_public_base_url`, `--review_ftp_target_dir` and `--review_hub_email` to prefill server settings; unknown settings remain editable. Use `--review_genome_id` and `--review_species` for explicit assembly/species names. Disable preparation with `--prepare_manual_review false`. LEAP generates the launch files; submission and FTP publishing remain manual.
 
+The review bundle also includes positive, negative and unsplit mapped-input BAMs under `manual_review/reads/`, each with a CSI index. They reuse LEAP's selected chromosome inputs, preserve secondary/supplementary and duplicate records, and use BAM orientation for strand splitting. These are all mapped input evidence, not selected-extension support subsets. Nonempty BAMs are added to both public and offline JBrowser samplesheets with the review reference; JBrowser prepares CRAM alignment tracks. The summary records alignment counts and provenance. No extra pipeline input is needed beyond the existing BAM and index; allow additional disk space for the three alignment views.
+
 See [manual review preparation](docs/manual_review.md) for the 12 views, launch commands and preparing an existing run without rerunning LEAP.
 
 ## Duplicate transcript recommendations
@@ -518,6 +520,16 @@ python3 assets/process_internal_extensions.py /path/to/leap_run /path/to/new_pro
 This standalone asset brings LEAP2GO's existing internal/external classification into LEAP without changing the Nextflow workflow. It restores internal terminal exons from raw annotation, saves original candidates separately, and writes strand-correct extension stats, including zero-extension rows for fully restored transcripts. Already blacklisted 5′ ends retain support/read-count values `blacklisted` and their `LEAP_blacklisted` tag; other restored ends use `none / 0`. Internal classification does not create new blacklist entries. Transcripts without CDS are excluded as before. It requires only Python's standard library and local `sort`, and leaves input files untouched.
 
 See [the processing guide](docs/internal_extension_processing.md) for classification rules, output layout and the subsequent datacheck/JBrowse workflow. Small positive/negative-strand examples are in `tests/data/internal_extensions/`.
+
+## Impact statistics and dashboard
+
+Every run now publishes `impact/index.html`, an offline dashboard with downloadable transcript/gene statistics. It compares original LEAP output, calculated external output and internal additions, with chromosome/strand filters, extension lengths, support, blacklist counts and datacheck outcomes. It highlights newly covered genomic bases outside every raw feature and new exonic coverage, counting each chromosome position once across transcripts and strands. Separate read-supported and transcript-summed statistics remain available. Reports finish before the final datacheck gate and remain available when checks fail. Statistics also run when manual review or datachecks are disabled; disabled validation is labelled explicitly.
+
+See [counting rules, outputs and standalone usage](docs/impact_dashboard.md). The report reuses existing internal-extension classification without modifying annotations or running repairs.
+
+## Transcript feature repair asset
+
+`assets/repair_transcript_features.py` optionally rebuilds retained models from published raw annotation, restoring protected features and metadata while keeping verified outward endpoints. It writes a repaired GFF, matching corrected stats and a detailed change/validation report into a new directory. Ambiguous models stop repair without publishing repaired annotations. Inputs remain untouched; this asset is not part of the automatic pipeline. See [usage and repair rules](docs/repair_transcript_features.md), including processed external output support and exit codes.
 
 ## JBrowse review bundles
 

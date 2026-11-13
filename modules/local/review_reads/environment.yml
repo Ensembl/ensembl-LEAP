@@ -1,0 +1,7 @@
+name: leap-review-reads
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.11
+  - samtools=1.18

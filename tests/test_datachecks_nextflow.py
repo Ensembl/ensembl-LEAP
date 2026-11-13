@@ -64,6 +64,12 @@ class NextflowDatachecksTests(unittest.TestCase):
         summary_path = root/'published/datachecks/summary/summary.json'
         self.assertTrue(summary_path.exists(),result.stdout+result.stderr)
         summary = json.loads(summary_path.read_text())
+        impact_path = root/'published/impact'
+        self.assertTrue((impact_path/'index.html').is_file(), result.stdout+result.stderr)
+        self.assertTrue((impact_path/'transcripts.csv').is_file())
+        impact = json.loads((impact_path/'summary.json').read_text())
+        self.assertEqual(impact['datachecks']['counts'], summary['counts'])
+        self.assertEqual(impact['status'], 'INPUT_ERROR' if scenario == 'missing' else 'COMPLETE')
         self.assertEqual(summary['expected_checks'],20)
         self.assertEqual(summary['received_status_files'],20)
         for entry in summary['results']:

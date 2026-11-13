@@ -5,6 +5,7 @@ params.output_directory = ''
 params.missing_negative = false
 params.with_checks = false
 params.no_reference = false
+params.missing_reads = false
 workflow {
     root = params.fixture_dir
     scopes = Channel.of(['1', 'positive'], ['1', 'negative'])
@@ -18,7 +19,9 @@ workflow {
     lengths = params.no_reference ? Channel.value([]) : Channel.value(file("${root}/reference.sizes"))
     settings = Channel.value([genome_id: 'hg38', species: 'homo_sapiens', publication: 'public',
         published_root: file("${params.output_directory}/manual_review").toAbsolutePath().toString()])
-    MANUAL_REVIEW(scopes, raw, finals, lengths, settings)
+    reads = params.missing_reads ? Channel.empty() : Channel.of(['1',
+        file("${root}/reads/1.bam", checkIfExists: true), file("${root}/reads/1.bam.csi", checkIfExists: true)])
+    MANUAL_REVIEW(scopes, raw, finals, lengths, settings, reads)
     if (params.with_checks) {
         selected = Channel.of('positive', 'negative').map { s -> ["1_${s}".toString(),
             file("${root}/fixed_extensions_before_partial_protection/test_1_${s}_FE_SCF.bed"),

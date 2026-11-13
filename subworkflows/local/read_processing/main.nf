@@ -55,6 +55,7 @@ workflow READ_PROCESSING {
 
     emit:
     reads_sample_sheet = EXTRACT_CHROMOSOMES_FROM_READS.out.reads_chr_sample_sheet
+    chromosome_alignments = SPLIT_READS_BY_CHROMOSOME.out.split_reads_by_chromosome
     unique_splice_sites = EXTRACT_UNIQUE_SPLICE_SITES_FROM_READS.out.unique_splice_sites.map { chromosome, file, strand, exon_type -> ["${chromosome}_${strand}_${exon_type}", file] }
 }
 

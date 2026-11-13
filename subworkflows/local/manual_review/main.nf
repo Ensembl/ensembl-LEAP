@@ -1,6 +1,7 @@
 include { PREPARE_REVIEW_RAW } from '../../../modules/local/review_raw/main.nf'
 include { PREPARE_REVIEW_EXTENSIONS } from '../../../modules/local/review_extensions/main.nf'
 include { BUILD_REVIEW_BUNDLE } from '../../../modules/local/review_bundle/main.nf'
+include { PREPARE_REVIEW_READS } from '../../../modules/local/review_reads/main.nf'
 
 workflow MANUAL_REVIEW {
     take:
@@ -9,16 +10,19 @@ workflow MANUAL_REVIEW {
     final_outputs
     reference_lengths
     settings
+    read_alignments
 
     main:
     helpers = Channel.value([
         file("${moduleDir}/../../../bin/prepare_manual_review.py", checkIfExists: true),
+        file("${moduleDir}/../../../bin/prepare_review_reads.py", checkIfExists: true),
         file("${moduleDir}/../../../assets/process_internal_extensions.py", checkIfExists: true),
         file("${moduleDir}/../../../assets/check_reference_coordinates.py", checkIfExists: true)
     ])
     inputs = expected_scope.toList().map { [scopes: it] }
         .combine(raw_annotation.toList().map { [raw: it] }).map { a, b -> a + b }
         .combine(final_outputs.toList().map { [finals: it] }).map { a, b -> a + b }
+        .combine(read_alignments.toList().map { [reads: it] }).map { a, b -> a + b }
         .map { b ->
             def scopes = b.scopes
             def raw = b.raw
@@ -41,7 +45,10 @@ workflow MANUAL_REVIEW {
                 if (finals.count { it[0].toString() == id } != 1)
                     error "Missing or duplicate final annotation for manual review: ${id}"
             }
-            [scopes: unique, raw: raw, finals: finals]
+            if (b.reads.size() != chromosomes.size() || b.reads.any { !(it[0].toString() in chromosomes) } ||
+                chromosomes.any { c -> b.reads.count { it[0].toString() == c } != 1 })
+                error 'Missing, duplicate or unexpected manual-review chromosome BAM/index pairs.'
+            [scopes: unique, raw: raw, finals: finals, reads: b.reads]
         }
     raw_jobs = inputs.flatMap { b -> b.raw.collect { c, raw -> [c.toString(), raw] } }
     extension_jobs = inputs.flatMap { b ->
@@ -52,8 +59,13 @@ workflow MANUAL_REVIEW {
     }
     PREPARE_REVIEW_RAW(raw_jobs, helpers)
     PREPARE_REVIEW_EXTENSIONS(extension_jobs, helpers)
+    read_jobs = inputs.map { b -> [b.scopes, b.reads.collect { it[0].toString() },
+        b.reads.collect { it[1] }, b.reads.collect { it[2] }] }
+    read_helper = Channel.value(file("${moduleDir}/../../../bin/prepare_review_reads.py", checkIfExists: true))
+    PREPARE_REVIEW_READS(read_jobs, read_helper)
     parts = PREPARE_REVIEW_RAW.out.partition.mix(PREPARE_REVIEW_EXTENSIONS.out.partition).toList()
-    BUILD_REVIEW_BUNDLE(parts, inputs.map { it.scopes }, settings, helpers, reference_lengths)
+    BUILD_REVIEW_BUNDLE(parts, inputs.map { it.scopes }, settings, helpers, reference_lengths,
+        PREPARE_REVIEW_READS.out.evidence)
 
     emit:
     bundle = BUILD_REVIEW_BUNDLE.out.bundle

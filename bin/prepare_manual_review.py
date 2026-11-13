@@ -43,6 +43,16 @@ def processor():
     return module
 
 
+def read_processor():
+    path = Path(__file__).with_name('prepare_review_reads.py')
+    if not path.is_file():
+        raise ValueError('Missing prepare_review_reads.py helper')
+    spec = importlib.util.spec_from_file_location('review_alignment_processor', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def records(path):
     opener = gzip.open if str(path).endswith('.gz') else open
     with opener(path, 'rt', encoding='utf-8') as handle:
@@ -244,12 +254,14 @@ from pathlib import Path
 with open(''' + repr(sheet) + ''', newline='') as handle:
     rows=list(csv.DictReader(handle))
 if not rows:
-    raise SystemExit('No nonempty annotation tracks are available.')
+    raise SystemExit('No nonempty review tracks are available.')
 for row in rows:
     if any('EDIT_ME' in value for value in row.values()):
         raise SystemExit('Complete reference/assembly/species settings in samplesheet.csv before launching.')
     if not Path(row['file']).is_file():
         raise SystemExit('Samplesheet input is missing: '+row['file'])
+    if row['type'] == 'bam' and (not row['reference_file'] or not Path(row['reference_file']).is_file()):
+        raise SystemExit('Alignment reference is missing: '+row['reference_file'])
 PY_VALIDATE
 command=(nextflow run "$JBROWSER_PIPELINE/main.nf"
     --input "$REVIEW_DIR/''' + sheet + '''"
@@ -272,7 +284,7 @@ echo ''' + shlex.quote('Offline JBrowser preparation finished: jbrowser_output_o
 '''
 
 
-def build_bundle(partitions, scopes, settings, output, reference_lengths=None):
+def build_bundle(partitions, scopes, settings, output, reference_lengths=None, read_evidence=None):
     output = Path(output).absolute()
     if output.exists() or output.is_symlink():
         raise ValueError('Output must be a new directory: ' + str(output))
@@ -305,6 +317,23 @@ def build_bundle(partitions, scopes, settings, output, reference_lengths=None):
         mapping[key] = (folder, data)
     if set(raw) != {c for c, s in expected} or set(extended) != expected:
         raise ValueError('Missing or unexpected raw/extended review partitions')
+    read_summary = dict(status='not_supplied', description='Read evidence was not supplied to this standalone annotation-only build.')
+    if read_evidence:
+        read_evidence = Path(read_evidence)
+        read_summary = json.loads((read_evidence / 'read-summary.json').read_text())
+        counts = read_summary.get('counts', {})
+        if ({tuple(scope) for scope in read_summary.get('scopes', [])} != expected or
+                set(counts) != {'positive', 'negative', 'unsplit'} or
+                any(type(n) is not int or n < 0 for n in counts.values()) or
+                counts['positive'] + counts['negative'] != counts['unsplit']):
+            raise ValueError('Read evidence has incompatible scopes or alignment counts')
+        for view in ('positive', 'negative', 'unsplit'):
+            for suffix in ('.bam', '.bam.csi'):
+                if not (read_evidence / (view + suffix)).is_file():
+                    raise ValueError('Missing prepared read-evidence BAM/index: ' + view + suffix)
+        read_summary = dict(read_summary, status='available')
+        if settings.get('read_input_bam'):
+            read_summary['original_input'] = dict(bam=settings['read_input_bam'], index=settings['read_input_index'])
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.' + output.name + '-', dir=output.parent) as temporary:
         staging = Path(temporary) / 'bundle'
@@ -346,6 +375,27 @@ def build_bundle(partitions, scopes, settings, output, reference_lengths=None):
                         publication=settings.get('publication', 'public')))
                     metadata.append(dict(sample=sample, tags='LEAP;manual_review;' + group + ';' + strand,
                         description=DESCRIPTIONS[group] + ' Strand view: ' + strand + '.'))
+        if read_evidence:
+            reads = staging / 'reads'
+            reads.mkdir()
+            shutil.copyfile(read_evidence / 'read-summary.json', reads / 'read-summary.json')
+            for view in ('positive', 'negative', 'unsplit'):
+                for suffix in ('.bam', '.bam.csi'):
+                    shutil.copyfile(read_evidence / (view + suffix), reads / (view + suffix))
+                count = read_summary['counts'][view]
+                relative = 'reads/' + view + '.bam'
+                manifest.append(dict(group='reads', strand=view, file=relative, track_type='bam',
+                    alignment_records=count, index_file=relative + '.csi', included_in_samplesheet=count > 0))
+                if count:
+                    sample = 'LEAP_reads_' + view
+                    samples.append(dict(sample=sample, type='bam', file=str(published / relative),
+                        reference_file=settings.get('reference_genome') or 'EDIT_ME/reference.fa',
+                        genome_id=settings.get('genome_id') or 'EDIT_ME_ASSEMBLY',
+                        species=settings.get('species') or 'EDIT_ME_SPECIES', track_category='LEAP read evidence',
+                        data_category='alignment', ftp_project=settings.get('ftp_project') or 'LEAP_review',
+                        publication=settings.get('publication', 'public')))
+                    metadata.append(dict(sample=sample, tags='LEAP;manual_review;read_evidence;' + view,
+                        description=read_summary['description'] + ' Strand view: ' + view + '.'))
         if samples:
             reference = settings.get('reference_genome') or 'EDIT_ME/reference.fa'
             samples.insert(0, dict(sample='LEAP_reference', type='reference', file=reference,
@@ -362,9 +412,11 @@ def build_bundle(partitions, scopes, settings, output, reference_lengths=None):
         write_csv(staging / 'samplesheet_offline.csv', SHEET_FIELDS,
                   [dict(row, publication='offline') for row in samples])
         write_csv(staging / 'sample_metadata.csv', ['sample', 'tags', 'description'], metadata)
-        write_csv(staging / 'track_manifest.tsv', ['group', 'strand', 'file', 'features', 'transcripts', 'included_in_samplesheet'], manifest, '\t')
+        write_csv(staging / 'track_manifest.tsv', ['group', 'strand', 'file', 'features', 'transcripts',
+            'included_in_samplesheet', 'track_type', 'alignment_records', 'index_file'], manifest, '\t')
         summary = dict(settings=settings, scopes=sorted(expected), tracks=manifest,
-            partitions=[data for folder, data in extended.values()], raw_partitions=[data for folder, data in raw.values()])
+            partitions=[data for folder, data in extended.values()], raw_partitions=[data for folder, data in raw.values()],
+            read_evidence=read_summary)
         (staging / 'review-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
         script = staging / 'run_jbrowser.sbatch'
         script.write_text(launch_script(settings))
@@ -381,6 +433,10 @@ def build_bundle(partitions, scopes, settings, output, reference_lengths=None):
             'Raw/leaped views retain gene rows; processed external/internal views are transcript-oriented.\n'
             'Header-only files are retained but omitted from the samplesheet. See track_manifest.tsv.\n'
             'processing/ contains corrected external stats and classification/dropped-no-CDS tables.\n\n'
+            'When supplied, reads/ contains positive, negative and unsplit mapped-input BAMs with CSI indexes.\n'
+            'BAM flag 0x10 defines orientation. Alignment counts are records, not molecules or selected-extension support.\n'
+            'Empty alignment views remain on disk but are omitted from JBrowser sheets.\n'
+            'Alignment rows use reference_file; update those entries too when changing the reference after generation.\n'
             'Before launch: complete any EDIT_ME cells in samplesheet.csv; check the server reference and assembly.\n'
             'Edit JBrowser checkout, FTP roots, hub email and Slurm settings in run_jbrowser.sbatch.\n'
             'Submit with: sbatch run_jbrowser.sbatch\n'
@@ -412,11 +468,14 @@ def main():
     for name in ('partitions', 'manifest', 'settings', 'output'):
         bundle.add_argument(name)
     bundle.add_argument('--reference-lengths')
+    bundle.add_argument('--read-evidence')
     run = sub.add_parser('run')
     run.add_argument('leap_output_dir', type=Path); run.add_argument('output', type=Path)
     run.add_argument('--chromosomes', nargs='+', required=True)
     run.add_argument('--strand', choices=('positive', 'negative', 'both'), default='both')
     run.add_argument('--reference-lengths'); run.add_argument('--reference-genome')
+    run.add_argument('--reads', type=Path); run.add_argument('--reads-index', type=Path)
+    run.add_argument('--read-threads', type=int, default=1)
     for name in ('genome-id', 'species', 'jbrowser-pipeline', 'public-base-url', 'ftp-target-dir', 'hub-email'):
         run.add_argument('--' + name, default='')
     run.add_argument('--ftp-project', default='LEAP_review')
@@ -429,8 +488,10 @@ def main():
             extension_partition(args.chromosome, args.strand, args.raw, args.extended, args.stats, args.output)
         elif args.command == 'bundle':
             build_bundle(sorted(Path(args.partitions).iterdir()), json.loads(Path(args.manifest).read_text()),
-                         json.loads(Path(args.settings).read_text()), args.output, args.reference_lengths)
+                         json.loads(Path(args.settings).read_text()), args.output, args.reference_lengths, args.read_evidence)
         else:
+            if bool(args.reads) != bool(args.reads_index):
+                raise ValueError('--reads and --reads-index must be supplied together')
             if args.output.exists() or args.output.is_symlink():
                 raise ValueError('Output must be a new directory: ' + str(args.output))
             strands = list(STRANDS) if args.strand == 'both' else [args.strand]
@@ -440,7 +501,8 @@ def main():
             if settings.get('reference_genome'):
                 settings['reference_genome'] = str(Path(settings['reference_genome']).resolve(strict=True))
             with tempfile.TemporaryDirectory(prefix='leap-review-') as temporary:
-                parts = Path(temporary)
+                parts = Path(temporary) / 'partitions'
+                parts.mkdir()
                 for c in args.chromosomes:
                     annotation = one_file(args.leap_output_dir / 'raw_annotation', 'current_annotation_' + c,
                         ('.gff3', '.gff', '.gff3.gz', '.gff.gz'))
@@ -450,9 +512,19 @@ def main():
                             ('.gff', '.gff3', '.gff.gz', '.gff3.gz'))
                         stats = one_file(args.leap_output_dir / 'extended_transcripts_stats', c + '_' + s + '_stats', ('.tsv', '.tsv.gz'))
                         extension_partition(c, s, annotation, extended, stats, parts / ('extended_' + c + '_' + s))
-                build_bundle(sorted(parts.iterdir()), scopes, settings, args.output, args.reference_lengths)
+                evidence = None
+                if args.reads:
+                    helper = read_processor()
+                    chunks = helper.partition_source(args.reads, args.reads_index, args.chromosomes,
+                        Path(temporary) / 'read-inputs', args.read_threads)
+                    evidence = Path(temporary) / 'read_evidence'
+                    helper.prepare_reads(chunks, scopes, evidence, args.read_threads)
+                    provenance = json.loads((evidence / 'read-summary.json').read_text())
+                    provenance['original_input'] = dict(bam=str(args.reads.resolve()), index=str(args.reads_index.resolve()))
+                    (evidence / 'read-summary.json').write_text(json.dumps(provenance, indent=2) + '\n')
+                build_bundle(sorted(parts.iterdir()), scopes, settings, args.output, args.reference_lengths, evidence)
         return 0
-    except (OSError, ValueError, EOFError, csv.Error, subprocess.SubprocessError) as error:
+    except (OSError, ValueError, KeyError, TypeError, EOFError, csv.Error, subprocess.SubprocessError) as error:
         print('ERROR: ' + str(error), file=sys.stderr)
         return 2
 

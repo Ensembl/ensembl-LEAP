@@ -1,4 +1,4 @@
-# Prepare annotation for manual review
+# Prepare annotation and read evidence for manual review
 
 LEAP automatically prepares `manual_review/` after the final annotations and stats
 are available. Set `--prepare_manual_review false` to disable this preparation.
@@ -41,9 +41,47 @@ Empty views remain in `track_manifest.tsv` but are omitted from the JBrowser
 samplesheet because they cannot produce an annotation track. No empty view is
 replaced with another strand's annotation.
 
+## Read evidence
+
+Automatic review preparation also uses LEAP's existing chromosome BAMs to build
+`reads/positive.bam`, `reads/negative.bam` and `reads/unsplit.bam`, each with a
+`.bam.csi` index. These views contain **all mapped input alignment records within
+the run's selected chromosome/strand scope**. They are not restricted to reads
+supporting a selected extension, or divided into external/internal support sets.
+
+Positive/negative orientation follows BAM flag `0x10`, matching LEAP's existing
+read-to-BED conversion. Unmapped records are excluded. Secondary, supplementary,
+duplicate-marked, QC-failed and low-MAPQ mapped records remain; no new quality or
+support filtering is applied. Repeated read names and identical alignment records
+are preserved. Counts are **alignment records**, not unique molecules or LEAP's
+per-extension support counts. SAM optional-tag order and processing-history
+header lines may change during merging; alignment content, tag values and
+read-group identities are retained.
+
+The BAMs are coordinate-sorted and CSI-indexed, including empty views. Input
+reference dictionaries/read groups must be compatible, and there must be one
+chromosome BAM/index pair per expected chromosome. Missing, ambiguous, invalid or
+incorrectly scoped inputs stop preparation. Source paths, selected-record counts
+and output counts are retained in `reads/read-summary.json` and the bundle
+summary. Empty views remain on disk and in the manifest but are omitted from
+the samplesheets.
+
+Nonempty read views use JBrowser's `type=bam` alignment route, with the matching
+reference in `reference_file` and `data_category=alignment`. JBrowser validates
+and converts them to indexed CRAM tracks. Both public and offline launchers
+include the read rows; the offline launcher forces them offline too. If editing
+the reference after bundle generation, update its reference row **and** the BAM
+rows' `reference_file` entries in the shared samplesheet. The launchers check
+these reference paths before starting JBrowser.
+
 ## Reference and launch settings
 
 Provide your server's matching FASTA (including gzip) or 2bit file to LEAP:
+
+For an editable Slurm launcher with the paths and settings grouped at the top,
+copy [`examples/run_leap.sbatch`](../examples/run_leap.sbatch), edit it, then submit
+with `sbatch /path/to/run_leap.sbatch`. Set `RESUME=true` there to resume a run.
+Its relative input/reference paths are resolved from `LEAP_DIR`.
 
 ```bash
 nextflow run main.nf -profile hpc_slurm \
@@ -79,6 +117,9 @@ The bundle contains:
 ```text
 manual_review/
   annotations/{raw,leaped,external,internal}/{positive,negative,unsplit}.gff3
+  reads/{positive,negative,unsplit}.bam
+  reads/{positive,negative,unsplit}.bam.csi
+  reads/read-summary.json
   processing/<chromosome>_<strand>/stats/   # Corrected external-output stats
   processing/<chromosome>_<strand>/ids/     # Classification and dropped-model lists
   reference.chrom.sizes                   # When reference lengths are supplied
@@ -133,12 +174,12 @@ Paths in the sheets point to the published bundle. Update them and the script's
 
 ## Workflow and existing runs
 
-Three new modules split raw annotation, process each LEAP chromosome/strand, then
-merge the views and write the launch bundle. They consume declared workflow
+Four modules split raw annotation, process each LEAP chromosome/strand, prepare
+read alignments, then merge the views and write the launch bundle. They consume declared workflow
 channels, so they do not race asynchronous published copies. Missing, duplicated
 or unexpected partitions fail clearly instead of silently producing an incomplete
 review. Sorting errors stop the build. Bundle publication occurs only after a
-complete build. The final datacheck gate waits for review preparation, preserving
+complete build, including all BAMs and indexes. The final datacheck gate waits for review preparation, preserving
 review files even when a datacheck reports a biological failure or input error.
 
 To prepare the same bundle from an existing LEAP run, without a database or BAM
@@ -149,6 +190,7 @@ python3 bin/prepare_manual_review.py run /server/leap_results /server/new_review
   --chromosomes 1 2 21 X Y \
   --reference-genome /server/reference/genome.fa \
   --reference-lengths /server/reference/genome.fa.fai \
+  --reads /server/reads.bam --reads-index /server/reads.bam.csi \
   --genome-id hg38 --species homo_sapiens \
   --jbrowser-pipeline /server/software/havana-jbrowser
 ```
@@ -159,7 +201,24 @@ The standalone command also accepts `--public-base-url`, `--ftp-target-dir`,
 publication. Plain/gzipped pipeline inputs are supported; ambiguous copies are
 errors. Choose a new output directory. Input files are never overwritten.
 
-Requirements are Python 3.10+ and local `sort`; no database or browser installation
-is needed to prepare the bundle. Building all views needs temporary disk space
-for partition copies and whole-annotation sorting, in addition to the 12 final
-files. The generated job requires your normal JBrowser/Nextflow environment.
+For standalone builds, `--reads` and `--reads-index` must be supplied together;
+input indexes may be BAI or CSI, and are used explicitly. `--read-threads` controls
+Samtools threads (default 1). The original BAM can contain other chromosomes;
+only the selected chromosomes/strands enter the review views. Omit both read
+options to retain the existing annotation-only command; the summary explicitly
+records `read_evidence.status=not_supplied`. Automatic pipeline builds always
+require read inputs when review preparation is enabled.
+
+Requirements are Python 3.10+, local `sort`, and Samtools when including reads;
+no database or browser installation is needed to prepare the bundle. The read
+module declares Conda Python 3.11 and Samtools 1.18; deployments disabling Conda
+must supply those tools. Building all views needs temporary disk space for
+partition copies, sorting, BAM merging and the three delivered BAM/index pairs,
+plus publication copies. Large input BAMs can substantially increase disk usage
+and preparation time. The generated job requires your normal JBrowser/Nextflow
+environment. No additional read option is needed for automatic LEAP runs:
+`--reads` and `--reads_index` already provide the evidence.
+
+## Impact statistics
+
+The sibling `impact/` output is generated automatically even when manual-review preparation is disabled. Open `impact/index.html` for original/external/internal counts, read-supported sequence additions, length distributions, gene/transcript CSV downloads and datacheck outcomes. Its external/internal views use the same processor as this review bundle. See [impact statistics](impact_dashboard.md) for counting rules and limitations.

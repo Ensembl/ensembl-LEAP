@@ -20,6 +20,8 @@ include { PROCESS_CAGE_AND_POLYA } from './subworkflows/local/process_cage_and_p
 include { OVERLAP_READS } from './subworkflows/local/overlap_reads/main.nf'
 include { DATACHECKS } from './subworkflows/local/datachecks/main.nf'
 include { MANUAL_REVIEW } from './subworkflows/local/manual_review/main.nf'
+include { LEAP_IMPACT_REPORT } from './subworkflows/local/impact_report/main.nf'
+include { LEAP_IMPACT_GATE } from './modules/local/impact_gate/main.nf'
 
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -107,16 +109,23 @@ workflow {
             genome_id: params.review_genome_id, species: params.review_species,
             jbrowser_pipeline: params.review_jbrowser_pipeline, ftp_project: params.review_ftp_project,
             public_base_url: params.review_public_base_url, ftp_target_dir: params.review_ftp_target_dir,
-            hub_email: params.review_hub_email, publication: 'public'
+            hub_email: params.review_hub_email, publication: 'public',
+            read_input_bam: params.reads ? file(params.reads).toAbsolutePath().toString() : '',
+            read_input_index: params.reads_index ? file(params.reads_index).toAbsolutePath().toString() : ''
         ])
         MANUAL_REVIEW(expected_scope, PROCESS_ANNOTATION.out.raw_annotation,
-            OVERLAP_READS.out.datacheck_outputs, review_lengths, review_settings)
+            OVERLAP_READS.out.datacheck_outputs, review_lengths, review_settings,
+            READ_PROCESSING.out.chromosome_alignments)
         review_ready = MANUAL_REVIEW.out.ready
     }
     if (datachecks_enabled) {
         DATACHECKS(expected_scope, PROCESS_ANNOTATION.out.raw_annotation,
             OVERLAP_READS.out.datacheck_outputs, OVERLAP_READS.out.selected_extensions,
             PROCESS_ANNOTATION.out.natural_overlaps, datacheck_reference, review_ready)
+    } else {
+        LEAP_IMPACT_REPORT(expected_scope, PROCESS_ANNOTATION.out.raw_annotation,
+            OVERLAP_READS.out.datacheck_outputs, Channel.value([]))
+        LEAP_IMPACT_GATE(LEAP_IMPACT_REPORT.out.summary, review_ready)
     }
 
 }

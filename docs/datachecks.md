@@ -84,3 +84,7 @@ malformed input, a missing CSV, and biological failures in other checks still fa
 the gate after all reports publish. Empty final GFFs pass this audit with an empty
 CSV. Duplicate reports do not establish redundancy in the saved database, where
 the uploader preserves original MANE coordinates.
+
+## Impact report
+
+The automatic workflow also writes `impact/index.html` and CSV/JSON impact statistics from declared annotation/stats channels. Reporting waits for the completed datacheck summary; the final gate waits for both impact reporting and manual-review preparation. Biological failures retain the dashboard. Missing or inconsistent reporting inputs produce an incomplete dashboard with diagnostics and fail the final gate. See [impact statistics](impact_dashboard.md) for definitions and the standalone rebuild command.

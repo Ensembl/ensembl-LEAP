@@ -11,6 +11,7 @@ include { RUN_DATACHECK as CHECK_CDS_OVERLAPS } from '../../../modules/local/dat
 include { RUN_DATACHECK as CHECK_DUPLICATE_TRANSCRIPTS } from '../../../modules/local/datacheck/main.nf'
 include { SUMMARIZE_DATACHECKS } from '../../../modules/local/datacheck_summary/main.nf'
 include { DATACHECK_GATE } from '../../../modules/local/datacheck_gate/main.nf'
+include { LEAP_IMPACT_REPORT } from '../impact_report/main.nf'
 
 workflow DATACHECKS {
     take:
@@ -94,7 +95,8 @@ workflow DATACHECKS {
         CHECK_REFERENCE_COORDINATES.out.status, CHECK_CDS_OVERLAPS.out.status, CHECK_DUPLICATE_TRANSCRIPTS.out.status)
         .map { chromosome, strand, check_name, result -> result }.toList()
     SUMMARIZE_DATACHECKS(statuses, expected_manifest, runner)
-    DATACHECK_GATE(SUMMARIZE_DATACHECKS.out.verdict, runner, review_ready)
+    LEAP_IMPACT_REPORT(expected_scope, raw_annotation, final_outputs, SUMMARIZE_DATACHECKS.out.reports)
+    DATACHECK_GATE(SUMMARIZE_DATACHECKS.out.verdict, runner, review_ready, LEAP_IMPACT_REPORT.out.summary)
 
     emit:
     reports = CHECK_BOUNDARIES.out.reports.mix(
@@ -102,5 +104,6 @@ workflow DATACHECKS {
         CHECK_STRUCTURE.out.reports, CHECK_COMPLETENESS.out.reports, CHECK_PARTIAL_PROTECTION.out.reports,
         CHECK_REFERENCE_COORDINATES.out.reports, CHECK_CDS_OVERLAPS.out.reports, CHECK_DUPLICATE_TRANSCRIPTS.out.reports)
     summary = SUMMARIZE_DATACHECKS.out.reports
+    impact = LEAP_IMPACT_REPORT.out.reports
     passed = DATACHECK_GATE.out
 }

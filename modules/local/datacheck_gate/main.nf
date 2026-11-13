@@ -7,12 +7,13 @@ process DATACHECK_GATE {
     path verdict
     path runner, stageAs: 'helpers/*'
     val review_ready
+    path impact_summary
 
     output:
     path('datachecks.passed')
 
     script:
     """
-    python3 '${runner}' gate --verdict '${verdict}'
+    python3 '${runner}' gate --verdict '${verdict}' --impact-summary '${impact_summary}'
     """
 }

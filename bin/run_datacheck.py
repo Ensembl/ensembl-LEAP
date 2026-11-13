@@ -272,8 +272,14 @@ def gate(args):
     code = verdict['exit_code']
     if code not in (0, 1, 2):
         raise ValueError('Invalid verdict exit code')
+    if getattr(args, 'impact_summary', None):
+        impact = json.loads(Path(args.impact_summary).read_text())
+        if impact['status'] != 'COMPLETE' or impact['exit_code'] != 0:
+            print('LEAP impact statistics are incomplete. The dashboard and input diagnostics were retained.', file=sys.stderr)
+            code = 2
     if code:
-        print('LEAP datachecks failed: {}. All check reports and the combined summary were retained.'.format(verdict['counts']), file=sys.stderr)
+        if verdict['exit_code']:
+            print('LEAP datachecks failed: {}. All check reports and the combined summary were retained.'.format(verdict['counts']), file=sys.stderr)
         return code
     message = 'Required datachecks passed; duplicate-transcript recommendations require review.' if verdict.get('counts', {}).get('REVIEW') else 'All required datachecks passed or were explicitly not applicable.'
     Path('datachecks.passed').write_text(message + '\n')
@@ -298,6 +304,7 @@ def main():
     summary.add_argument('--output', required=True)
     final = commands.add_parser('gate')
     final.add_argument('--verdict', required=True)
+    final.add_argument('--impact-summary', help='Require complete impact statistics before passing the final gate')
     args = parser.parse_args()
     try:
         return {'check': run_check, 'summarize': summarize, 'gate': gate}[args.action](args)
