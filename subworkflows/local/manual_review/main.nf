@@ -2,6 +2,7 @@ include { PREPARE_REVIEW_RAW } from '../../../modules/local/review_raw/main.nf'
 include { PREPARE_REVIEW_EXTENSIONS } from '../../../modules/local/review_extensions/main.nf'
 include { BUILD_REVIEW_BUNDLE } from '../../../modules/local/review_bundle/main.nf'
 include { PREPARE_REVIEW_READS } from '../../../modules/local/review_reads/main.nf'
+include { PREPARE_REVIEW_SITES } from '../../../modules/local/review_sites/main.nf'
 
 workflow MANUAL_REVIEW {
     take:
@@ -11,12 +12,20 @@ workflow MANUAL_REVIEW {
     reference_lengths
     settings
     read_alignments
+    cage_evidence
+    polya_evidence
 
     main:
     helpers = Channel.value([
         file("${moduleDir}/../../../bin/prepare_manual_review.py", checkIfExists: true),
         file("${moduleDir}/../../../bin/prepare_review_reads.py", checkIfExists: true),
+        file("${moduleDir}/../../../bin/prepare_review_sites.py", checkIfExists: true),
+        file("${moduleDir}/../../../bin/install_review_region_presets.py", checkIfExists: true),
+        file("${moduleDir}/../../../assets/jbrowser_region_presets/cageBed6.tsv", checkIfExists: true),
+        file("${moduleDir}/../../../assets/jbrowser_region_presets/cageBed9.tsv", checkIfExists: true),
         file("${moduleDir}/../../../assets/process_internal_extensions.py", checkIfExists: true),
+        file("${moduleDir}/../../../assets/build_leap_impact_report.py", checkIfExists: true),
+        file("${moduleDir}/../../../assets/check_stats_gff_consistency.py", checkIfExists: true),
         file("${moduleDir}/../../../assets/check_reference_coordinates.py", checkIfExists: true)
     ])
     inputs = expected_scope.toList().map { [scopes: it] }
@@ -63,9 +72,10 @@ workflow MANUAL_REVIEW {
         b.reads.collect { it[1] }, b.reads.collect { it[2] }] }
     read_helper = Channel.value(file("${moduleDir}/../../../bin/prepare_review_reads.py", checkIfExists: true))
     PREPARE_REVIEW_READS(read_jobs, read_helper)
+    PREPARE_REVIEW_SITES(inputs.map { it.scopes }, cage_evidence, polya_evidence, helpers, reference_lengths)
     parts = PREPARE_REVIEW_RAW.out.partition.mix(PREPARE_REVIEW_EXTENSIONS.out.partition).toList()
     BUILD_REVIEW_BUNDLE(parts, inputs.map { it.scopes }, settings, helpers, reference_lengths,
-        PREPARE_REVIEW_READS.out.evidence)
+        PREPARE_REVIEW_READS.out.evidence, PREPARE_REVIEW_SITES.out.evidence)
 
     emit:
     bundle = BUILD_REVIEW_BUNDLE.out.bundle

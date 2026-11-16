@@ -139,7 +139,7 @@ class ReviewReadTests(unittest.TestCase):
             self.assertTrue(all(r['publication'] == 'offline' for r in csv.DictReader(handle)))
         summary = json.loads((output / 'review-summary.json').read_text())
         self.assertEqual(summary['read_evidence']['counts']['unsplit'], 4)
-        self.assertEqual(len(summary['tracks']), 15)
+        self.assertEqual(len(summary['tracks']), 16)
         self.assertEqual(summary['read_evidence']['original_input']['bam'], str(bam.resolve()))
         bins = self.root / 'executables'; bins.mkdir()
         captured = self.root / 'jbrowser-arguments.json'

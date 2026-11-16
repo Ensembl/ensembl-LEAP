@@ -31,6 +31,8 @@ TRANSCRIPT_FIELDS = ['chromosome', 'strand', 'gene_id', 'transcript_id', 'jbrows
     'raw_start', 'raw_end', 'leap_start', 'leap_end', 'external_start', 'external_end',
     'classification', 'dropped_no_cds'] + [side + '_' + field for side in SIDES
     for field in ('extension', 'support', 'read_count', 'external_extension', 'internal_extension')]
+REVIEW_TRANSCRIPT_FIELDS = [field for field in TRANSCRIPT_FIELDS if field not in {
+    'raw_start', 'raw_end', 'leap_start', 'leap_end', 'external_start', 'external_end'}]
 
 
 def compact(value):
@@ -226,6 +228,37 @@ def stats(path):
     return consistency.read_stats(path) if has_rows else {}
 
 
+def transcript_rows(raw, final, entries, models):
+    """Shared transcript table for the impact report and manual-review bundle."""
+    if set(entries) != set(final):
+        raise ValueError('Final annotation/stats membership differs')
+    if not set(final) <= set(raw):
+        raise ValueError('Final transcript absent from raw annotation; exact IDs are required')
+    rows = []
+    for k in sorted(final):
+        model = final[k]
+        chromosome, label = k[0], 'positive' if model['strand'] == '+' else 'negative'
+        entry, original, processed = entries[k], raw[k], models.get(k)
+        if (original['gene_id'], original['strand']) != (model['gene_id'], model['strand']):
+            raise ValueError('Raw/final transcript gene or strand differs: ' + k[1])
+        ext = processed['output_stats'] if processed else None
+        coordinates = ext['transcript_location'].rsplit(':', 1)[1].split('-') if ext else ('', '')
+        row = dict(chromosome=chromosome, strand=label, gene_id=model['gene_id'], transcript_id=k[1],
+            jbrowse_label='{}:{}-{}'.format(chromosome, model['start'], model['end']),
+            raw_start=original['start'], raw_end=original['end'], leap_start=model['start'], leap_end=model['end'],
+            external_start=int(coordinates[0]) if ext else '', external_end=int(coordinates[1]) if ext else '',
+            classification=processed['class'] if processed else 'dropped_no_cds', dropped_no_cds=not bool(processed))
+        for side in SIDES:
+            for field in ('extension', 'support', 'read_count'):
+                row[side + '_' + field] = entry[side + '_' + field]
+            length = int(entry[side + '_extension'])
+            retained = int(ext[side + '_extension']) if ext else 0
+            row[side + '_external_extension'] = retained
+            row[side + '_internal_extension'] = length - retained if processed else 0
+        rows.append(row)
+    return rows
+
+
 def analyse_partition(job):
     chromosome, label = job['chromosome'], job['strand']
     strand = STRANDS[label]
@@ -255,24 +288,7 @@ def analyse_partition(job):
         models, _ = processor.scan_extended(paths['gff'])
         baseline, _ = processor.scan_raw(paths['raw'], models)
         processor.prepare_models(models, baseline, processor.load_stats(paths['stats']))
-    rows = []
-    for k, model in final.items():
-        entry, original, processed = entries[k], raw[k], models.get(k)
-        ext = processed['output_stats'] if processed else None
-        coordinates = ext['transcript_location'].rsplit(':', 1)[1].split('-') if ext else ('', '')
-        row = dict(chromosome=chromosome, strand=label, gene_id=model['gene_id'], transcript_id=k[1],
-            jbrowse_label='{}:{}-{}'.format(chromosome, model['start'], model['end']),
-            raw_start=original['start'], raw_end=original['end'], leap_start=model['start'], leap_end=model['end'],
-            external_start=int(coordinates[0]) if ext else '', external_end=int(coordinates[1]) if ext else '',
-            classification=processed['class'] if processed else 'dropped_no_cds', dropped_no_cds=not bool(processed))
-        for side in SIDES:
-            for field in ('extension', 'support', 'read_count'):
-                row[side + '_' + field] = entry[side + '_' + field]
-            length = int(entry[side + '_extension'])
-            retained = int(ext[side + '_extension']) if ext else 0
-            row[side + '_external_extension'] = retained
-            row[side + '_internal_extension'] = length - retained if processed else 0
-        rows.append(row)
+    rows = transcript_rows(raw, final, entries, models)
     groups, genes = [], []
     baseline = dict(raw_transcripts=len(raw), eligible_raw_transcripts=eligible,
         raw_genes=len({r['gene_id'] for r in raw.values()}), raw_exon_union_bases=bases(protected))
@@ -446,6 +462,7 @@ def build(manifest, output, check_summary=None, label='LEAP impact'):
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.' + output.name + '-', dir=output.parent) as temp:
         staging = Path(temp) / 'impact'; staging.mkdir()
+        rows.sort(key=lambda r: (r['chromosome'], r['strand'], r['transcript_id']))
         table(staging / 'transcripts.csv', TRANSCRIPT_FIELDS, rows)
         metric_fields = sorted({k for g in groups for k, v in g.items() if isinstance(v, (int, float))})
         table(staging / 'partition_statistics.csv', ['stage', 'chromosome', 'strand'] + metric_fields, groups)

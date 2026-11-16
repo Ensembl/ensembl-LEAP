@@ -1,0 +1,18 @@
+# preset: cageBed9
+# description: CAGE BED9 intervals with the unmodified original signal in an extra field.
+# use_for: LEAP CAGE review tracks; display score is separate from originalCageScore.
+# extensions: .bed,.bed.gz
+# base_bed_columns: 9
+# bigbed_type: bed9+1
+# columns: 10
+column_index	name	type	description	validation
+1	chrom	string	Reference sequence chromosome or scaffold	
+2	chromStart	uint	Start position in chromosome	integer
+3	chromEnd	uint	End position in chromosome	integer
+4	name	string	Name of item	
+5	score	uint	BED display score from 0-1000; original signal is in originalCageScore	score
+6	strand	char[1]	+ or - for strand	strand
+7	thickStart	uint	Start of where display should be thick	integer
+8	thickEnd	uint	End of where display should be thick	integer
+9	reserved	uint	RGB value	itemRgb
+10	originalCageScore	string	Original CAGE score exactly as supplied; dot means no score was supplied	

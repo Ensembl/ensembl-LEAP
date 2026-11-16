@@ -10,6 +10,7 @@ process BUILD_REVIEW_BUNDLE {
     path helpers, stageAs: 'helpers/*'
     path reference_lengths, stageAs: 'reference/*'
     path read_evidence, stageAs: 'read_input'
+    path site_evidence, stageAs: 'site_input'
     output:
     path('manual_review'), emit: bundle
     val(true), emit: ready
@@ -26,6 +27,6 @@ process BUILD_REVIEW_BUNDLE {
     cat > settings.json <<'LEAP_REVIEW_SETTINGS'
     ${task.ext.reviewSettings}
     LEAP_REVIEW_SETTINGS
-    python3 helpers/prepare_manual_review.py bundle partitions scopes.json settings.json manual_review ${lengths} --read-evidence read_input
+    python3 helpers/prepare_manual_review.py bundle partitions scopes.json settings.json manual_review ${lengths} --read-evidence read_input --site-evidence site_input
     """
 }

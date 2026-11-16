@@ -1,0 +1,15 @@
+# preset: cageBed6
+# description: CAGE BED6 intervals with the unmodified original signal in an extra field.
+# use_for: LEAP CAGE review tracks normalized from BED or GFF; preserves original score text.
+# extensions: .bed,.bed.gz
+# base_bed_columns: 6
+# bigbed_type: bed6+1
+# columns: 7
+column_index	name	type	description	validation
+1	chrom	string	Reference sequence chromosome or scaffold	
+2	chromStart	uint	Start position in chromosome	integer
+3	chromEnd	uint	End position in chromosome	integer
+4	name	string	Name of item	
+5	score	uint	BED display score from 0-1000; original signal is in originalCageScore	score
+6	strand	char[1]	+ or - for strand	strand
+7	originalCageScore	string	Original CAGE score exactly as supplied; dot means no score was supplied	

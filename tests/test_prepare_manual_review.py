@@ -88,11 +88,23 @@ class ManualReviewTests(unittest.TestCase):
         self.assertEqual(json.loads((output / 'review-summary.json').read_text())['read_evidence']['status'], 'not_supplied')
         with (output / 'samplesheet.csv').open() as handle:
             rows = list(csv.DictReader(handle))
-        self.assertEqual(len(rows), 13)
+        self.assertEqual(len(rows), 14)
+        sheet = next(r for r in rows if r['type']=='spreadsheet')
+        self.assertEqual(sheet['sample'], 'LEAP_transcripts')
+        self.assertEqual(sheet['data_category'], 'leap_review')
+        self.assertEqual(Path(sheet['file']), output / 'spreadsheets/transcripts.csv')
+        with Path(sheet['file']).open() as handle:
+            transcripts = list(csv.DictReader(handle))
+        self.assertEqual(len(transcripts), 6)
+        positive = next(r for r in transcripts if r['transcript_id']=='source.1')
+        self.assertEqual(positive['jbrowse_label'], '1:250-950')
+        self.assertEqual(positive['five_prime_internal_extension'], '50')
+        self.assertEqual(positive['three_prime_external_extension'], '50')
+        self.assertEqual(sum(r['dropped_no_cds']=='True' for r in transcripts), 2)
         self.assertEqual({r['publication'] for r in rows}, {'public'})
         self.assertTrue(all(r['species'] == 'homo_sapiens' for r in rows))
         with (output / 'sample_metadata.csv').open() as handle:
-            self.assertEqual(len(list(csv.DictReader(handle))), 13)
+            self.assertEqual(len(list(csv.DictReader(handle))), 14)
         with (output / 'processing/1_positive/stats/1_positive_stats.tsv').open() as handle:
             stats = {r['transcript_id']: r for r in csv.DictReader(handle, delimiter='\t')}
         self.assertEqual(stats['source.1']['five_prime_extension'], '0')
@@ -112,14 +124,112 @@ class ManualReviewTests(unittest.TestCase):
         self.assertEqual((output / 'reference.chrom.sizes').read_text(), '1\t2000\n')
         with (output / 'track_manifest.tsv').open() as handle:
             manifest = list(csv.DictReader(handle, delimiter='\t'))
-        self.assertEqual(len(manifest), 12)
+        self.assertEqual(len(manifest), 13)
         self.assertTrue(all(r['transcripts'] == '0' and r['included_in_samplesheet'] == 'False'
                             for r in manifest if r['strand'] == 'negative'))
         with (output / 'samplesheet.csv').open() as handle:
             rows = list(csv.DictReader(handle))
-        self.assertEqual(len(rows), 9)
+        self.assertEqual(len(rows), 10)
         self.assertEqual(rows[0]['file'], str(reference.resolve()))
         self.assertTrue(all(Path(r['file']).is_file() for r in rows))
+
+    def test_review_spreadsheet_omits_audit_coordinates_and_preserves_other_impact_fields(self):
+        source = fixture(self.root / 'input')
+        output = self.run_bundle(source)
+        impact_output = self.root / 'impact'
+        result = subprocess.run([sys.executable, str(ROOT / 'assets/build_leap_impact_report.py'),
+            '--leap-output-dir', str(source), '--output', str(impact_output), '--chromosomes', '1'],
+            capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        omitted = {'raw_start', 'raw_end', 'leap_start', 'leap_end', 'external_start', 'external_end'}
+        with (output/'spreadsheets/transcripts.csv').open() as handle:
+            reader = csv.DictReader(handle); fields = reader.fieldnames; review_rows = list(reader)
+        with (impact_output/'transcripts.csv').open() as handle:
+            reader = csv.DictReader(handle); impact_fields = reader.fieldnames; impact_rows = list(reader)
+        self.assertTrue(omitted.isdisjoint(fields))
+        self.assertTrue(omitted <= set(impact_fields))
+        self.assertIn('jbrowse_label', fields)
+        self.assertEqual(fields, [f for f in impact_fields if f not in omitted])
+        self.assertEqual(review_rows, [{k:v for k,v in row.items() if k not in omitted} for row in impact_rows])
+        with (output / 'samplesheet_offline.csv').open() as handle:
+            sheet = next(r for r in csv.DictReader(handle) if r['type']=='spreadsheet')
+        self.assertEqual(sheet['publication'], 'offline')
+        self.assertEqual(sheet['file'], str(output / 'spreadsheets/transcripts.csv'))
+        with (output / 'sample_metadata.csv').open() as handle:
+            metadata = next(r for r in csv.DictReader(handle) if r['sample']=='LEAP_transcripts')
+        self.assertIn('JBrowse search labels', metadata['description'])
+
+    def test_empty_annotations_still_share_header_only_spreadsheet_without_reference_row(self):
+        source = fixture(self.root / 'input', empty_negative=True)
+        (source / 'raw_annotation/current_annotation_1.gff3').write_text('##gff-version 3\n')
+        (source / 'extended_transcripts/1_positive_extended.gff').write_text('##gff-version 3\n')
+        path = source / 'extended_transcripts_stats/1_positive_stats.tsv'
+        path.write_text(path.read_text().splitlines()[0] + '\n')
+        output = self.run_bundle(source)
+        with (output / 'samplesheet.csv').open() as handle:
+            rows = list(csv.DictReader(handle))
+        self.assertEqual([r['type'] for r in rows], ['spreadsheet'])
+        with (output / 'spreadsheets/transcripts.csv').open() as handle:
+            reader = csv.DictReader(handle)
+            self.assertIn('jbrowse_label', reader.fieldnames)
+            self.assertEqual(list(reader), [])
+
+    def test_missing_or_invalid_partition_spreadsheet_stops_bundle_publication(self):
+        source = DATA / 'internal_left_positive'
+        raw = source / 'raw_annotation/current_annotation_1.gff3'
+        part = self.root / 'raw_1'; review.raw_partition('1', raw, part)
+        extended = self.root / 'extended_1_positive'
+        review.extension_partition('1', 'positive', raw,
+            source / 'extended_transcripts/1_positive_extended.gff',
+            source / 'extended_transcripts_stats/1_positive_stats.tsv', extended)
+        sheet = extended / 'transcripts.csv'
+        original = sheet.read_bytes(); sheet.unlink()
+        with self.assertRaises(OSError):
+            review.build_bundle([part, extended], [('1','positive')], dict(genome_id='hg38'), self.root/'missing')
+        sheet.write_text('wrong,columns\n')
+        with self.assertRaisesRegex(ValueError, 'spreadsheet columns'):
+            review.build_bundle([part, extended], [('1','positive')], dict(genome_id='hg38'), self.root/'invalid')
+        self.assertFalse((self.root/'missing').exists())
+        self.assertFalse((self.root/'invalid').exists())
+        sheet.write_bytes(original)
+
+    @unittest.skipUnless(os.environ.get('LEAP_JBROWSER_PIPELINE'), 'set LEAP_JBROWSER_PIPELINE for spreadsheet sharing validation')
+    def test_jbrowser_public_and_offline_sharing_preserve_transcript_spreadsheet(self):
+        source = fixture(self.root / 'input')
+        output = self.run_bundle(source, ['--species', 'hg38'])
+        code = '''
+import json,shutil,subprocess,sys
+from pathlib import Path
+pipeline,bundle,work=map(Path,sys.argv[1:])
+sys.path.insert(0,str(pipeline/'bin'))
+import sample_metadata
+import ftp_copy_script_lib as ftp
+normalized=work/'samples.json'
+sample_metadata.samplesheet_to_json(bundle/'samplesheet.csv',normalized,bundle/'sample_metadata.csv')
+data=json.loads(normalized.read_text())
+sheet=next(r for r in data['samples'] if r['type']=='spreadsheet')
+metadata=data['metadata'][sheet['sample']]
+prepared=work/'prepared'
+target=prepared/'spreadsheet'/sheet['sample']/Path(sheet['file']).name
+target.parent.mkdir(parents=True);shutil.copyfile(sheet['file'],target)
+record=dict(sample=sheet['sample'],input_type='spreadsheet',kind='spreadsheet',
+    data_file=target.name,species=sheet['species'],data_category=sheet['data_category'],
+    ftp_project=sheet['ftp_project'],publication=sheet['publication'],**metadata)
+ftp.generate([record],prepared/'pipeline_info',target_dir=str(work/'ftp'),
+    public_base_url='https://example.invalid',archive_date='20261116')
+subprocess.run(['bash',str(prepared/'pipeline_info/copy_to_ftp.sh')],check=True,capture_output=True)
+subprocess.run(['bash',str(prepared/'pipeline_info/build_offline_bundle.sh'),str(work/'offline')],check=True,capture_output=True)
+'''
+        result = subprocess.run([sys.executable, '-c', code, os.environ['LEAP_JBROWSER_PIPELINE'],
+            str(output), str(self.root)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        original = (output/'spreadsheets/transcripts.csv').read_bytes()
+        public = self.root/'ftp/spreadsheet/hg38/leap_review/20261116_1'
+        self.assertEqual((public/'transcripts.csv').read_bytes(), original)
+        self.assertEqual((self.root/'offline/hg38/LEAP_review/spreadsheet/LEAP_transcripts/transcripts.csv').read_bytes(), original)
+        metadata = json.loads((public/'metadata.json').read_text())
+        self.assertIn('spreadsheet', metadata['samples'][0]['tags'])
+        self.assertEqual(metadata['samples'][0]['source'], 'local')
 
     def test_missing_ambiguous_and_overwrite_errors(self):
         source = fixture(self.root / 'input')
@@ -229,7 +339,7 @@ class ManualReviewTests(unittest.TestCase):
         self.assertEqual(rows[0]['file'], str(reference))
         self.assertEqual((output / 'samplesheet.csv').read_bytes(), original)
 
-    def test_reference_name_fills_known_assembly_and_species_only_when_unspecified(self):
+    def test_ftp_directory_defaults_to_resolved_genome_and_preserves_explicit_overrides(self):
         part = self.root / 'raw_1'
         source = DATA / 'internal_left_positive'
         raw = source / 'raw_annotation/current_annotation_1.gff3'
@@ -238,11 +348,25 @@ class ManualReviewTests(unittest.TestCase):
         review.extension_partition('1', 'positive', raw,
             source / 'extended_transcripts/1_positive_extended.gff',
             source / 'extended_transcripts_stats/1_positive_stats.tsv', extended)
-        review.build_bundle([part, extended], [('1', 'positive')],
-            dict(reference_genome='/server/Mus_musculus.GRCm39.dna.fa'), self.root / 'inferred')
-        settings = json.loads((self.root / 'inferred/review-summary.json').read_text())['settings']
-        self.assertEqual(settings['genome_id'], 'mm39')
-        self.assertEqual(settings['species'], 'mus_musculus')
+        cases = [
+            (dict(reference_genome='/server/Mus_musculus.GRCm39.dna.fa'), 'mm39', 'mm39'),
+            (dict(reference_genome='/server/Homo_sapiens.GRCh38.fa'), 'hg38', 'hg38'),
+            (dict(genome_id='custom_assembly'), 'custom_assembly', 'custom_assembly'),
+            (dict(reference_genome='/server/Homo_sapiens.GRCh38.fa', genome_id='explicit_id'), 'explicit_id', 'explicit_id'),
+            (dict(genome_id='hg38', species='homo_sapiens'), 'hg38', 'homo_sapiens'),
+        ]
+        for index, (supplied, genome_id, ftp_namespace) in enumerate(cases):
+            with self.subTest(settings=supplied):
+                output = self.root / ('resolved_' + str(index))
+                review.build_bundle([part, extended], [('1', 'positive')], supplied, output)
+                settings = json.loads((output / 'review-summary.json').read_text())['settings']
+                self.assertEqual(settings['genome_id'], genome_id)
+                self.assertEqual(settings['species'], ftp_namespace)
+                for sheet in ('samplesheet.csv', 'samplesheet_offline.csv'):
+                    with (output / sheet).open() as handle:
+                        rows = list(csv.DictReader(handle))
+                    self.assertTrue(rows)
+                    self.assertTrue(all(r['genome_id']==genome_id and r['species']==ftp_namespace for r in rows))
 
     def test_internal_track_requires_growth_at_an_internal_end_both_strands(self):
         source = fixture(self.root / 'input')

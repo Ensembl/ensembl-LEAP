@@ -111,11 +111,15 @@ workflow {
             public_base_url: params.review_public_base_url, ftp_target_dir: params.review_ftp_target_dir,
             hub_email: params.review_hub_email, publication: 'public',
             read_input_bam: params.reads ? file(params.reads).toAbsolutePath().toString() : '',
-            read_input_index: params.reads_index ? file(params.reads_index).toAbsolutePath().toString() : ''
+            read_input_index: params.reads_index ? file(params.reads_index).toAbsolutePath().toString() : '',
+            site_input_cage: file(params.cage).toAbsolutePath().toString(),
+            site_input_polya: file(params.polya).toAbsolutePath().toString()
         ])
         MANUAL_REVIEW(expected_scope, PROCESS_ANNOTATION.out.raw_annotation,
             OVERLAP_READS.out.datacheck_outputs, review_lengths, review_settings,
-            READ_PROCESSING.out.chromosome_alignments)
+            READ_PROCESSING.out.chromosome_alignments,
+            Channel.value(file(params.cage, checkIfExists: true)),
+            Channel.value(file(params.polya, checkIfExists: true)))
         review_ready = MANUAL_REVIEW.out.ready
     }
     if (datachecks_enabled) {

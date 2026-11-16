@@ -1,4 +1,4 @@
-# Prepare annotation and read evidence for manual review
+# Prepare annotations, read evidence and transcript tables for manual review
 
 LEAP automatically prepares `manual_review/` after the final annotations and stats
 are available. Set `--prepare_manual_review false` to disable this preparation.
@@ -74,6 +74,88 @@ the reference after bundle generation, update its reference row **and** the BAM
 rows' `reference_file` entries in the shared samplesheet. The launchers check
 these reference paths before starting JBrowser.
 
+## CAGE and poly(A) evidence
+
+Automatic review preparation includes the original `--cage` and `--polya` inputs,
+with positive, negative and unsplit views in `sites/cage/` and `sites/polya/`.
+These contain all supplied sites in the processed chromosome/strand scope, rather
+than only sites selected to support an extension. Unstranded sites appear only
+in the unsplit view. Original records and signal values are retained in each
+source's `source_records.tsv`; source paths, counts, display format and coordinate
+policy are recorded in `sites/site-summary.json` and `review-summary.json`.
+
+BED inputs retain their zero-based starts; GFF/GFF3 starts are converted to BED
+once. A leading `chr` prefix is removed, matching LEAP's evidence preparation.
+No liftover or other chromosome alias inference is performed. Sites outside the
+selected scope are counted and omitted. When reference lengths are provided,
+selected sites must fit the reference. Malformed inputs or sorting errors stop
+preparation without publishing a partial bundle.
+
+Native BED9 CAGE features retain their thick bounds and colours. Display scores
+are limited to integers from 0 to 1000. Each CAGE feature also carries an
+`originalCageScore` field with the exact original score text, including values
+above 1000, fractional scores and `.` for missing scores. This field is retained
+in bigBed for JBrowse feature details; it is separate from the display score.
+Original values also remain in the source record table. Eleven-column PolyA Atlas inputs use JBrowser's `polyAtlas` preset,
+preserving fractional TPM, sample support, protocol counts, annotations and
+motifs. Other supported BED/GFF evidence is normalized to BED6, retaining its
+original fields in the source table.
+
+All six BED files are produced, including empty views. Nonempty views become
+`type=regions`, `data_category=regions` samplesheet rows using the appropriate
+`cageBed9` (BED9+1), `cageBed6` (BED6+1), `polyAtlas`, `bed9` or `bed6` preset.
+The bundle supplies the CAGE format definitions in `region_presets/` and an
+`install_review_region_presets.py` helper. Both generated launchers install missing
+definitions into the chosen JBrowser checkout before starting it. Existing
+identical definitions are accepted; conflicting definitions are never overwritten
+and stop the launcher with an explicit diagnostic. The checkout must be writable
+for the first installation, or an administrator must copy the supplied definitions
+into its `assets/region_presets/` directory beforehand.
+Empty views remain in the manifest but are
+omitted from the samplesheets. Public and offline launchers include these tracks;
+the offline sheet sets every evidence row to `publication=offline` as usual.
+Preparing these views does not alter extension selection or the original files.
+
+## Transcript review spreadsheet
+
+Every bundle includes **`spreadsheets/transcripts.csv`**, one combined spreadsheet
+across the selected chromosomes and strands. It has one row per original LEAP
+output transcript, including zero-extension models and models subsequently
+excluded from external output because they have no CDS. Columns include exact
+versioned transcript/gene IDs, chromosome, strand, 5′/3′
+extension lengths, evidence and read counts, internal/external classification,
+and the `jbrowse_label` (`chromosome:start-end`) for finding the original LEAP model.
+
+This uses the same row builder as `impact/transcripts.csv` but omits the audit
+columns `raw_start`, `raw_end`, `leap_start`, `leap_end`, `external_start` and
+`external_end` from the shared spreadsheet. Those coordinates remain in the
+detailed impact CSV; every other field and transcript row is retained, including
+the JBrowse search label. It is assembled from declared annotation
+and stats partitions without waiting for published impact files. Review and
+impact reporting therefore stay independent before the final datacheck gate.
+
+The table is automatically registered in **both** samplesheets as:
+
+- `sample=LEAP_transcripts`, `type=spreadsheet`;
+- `file=<published manual_review>/spreadsheets/transcripts.csv`;
+- `data_category=leap_review`, with the bundle's FTP project and genome-ID namespace;
+- the selected publication mode; the offline sheet always uses `publication=offline`.
+
+JBrowser copies the local CSV unchanged. It is a downloadable spreadsheet, not
+an annotation track, and needs no conversion, index or reference of its own.
+After JBrowser preparation it is stored at
+`<JBrowser output>/spreadsheet/LEAP_transcripts/transcripts.csv`. Its public
+publishing script places it at
+`spreadsheet/hg38/leap_review/YYYYMMDD_N/transcripts.csv` for human (`mm39` for
+mouse), independently versioned from annotation/alignment data. The offline
+bundle contains the same CSV alongside the prepared review data. Tags and the
+description come from `sample_metadata.csv` as usual.
+
+Header-only spreadsheets remain available when no LEAP models are present.
+Missing, malformed or inconsistent per-partition spreadsheets stop bundle
+publication. Generating the bundle and launch scripts does not upload anything;
+JBrowser submission and its FTP publishing script remain manual steps.
+
 ## Reference and launch settings
 
 Provide your server's matching FASTA (including gzip) or 2bit file to LEAP:
@@ -98,13 +180,25 @@ nextflow run main.nf -profile hpc_slurm \
   --output_directory /server/leap_results
 ```
 
-`--review_genome_id` and `--review_species` explicitly set JBrowser's assembly ID
-and publication species directory. When omitted, a reference filename containing
-`GRCh38`/`hg38` supplies `hg38` and `homo_sapiens`; `GRCm39`/`mm39` supplies `mm39`
-and `mus_musculus`. These are filename-based defaults, not assembly verification.
+`--review_genome_id` sets JBrowser's assembly ID. `--review_species` sets the FTP
+directory namespace: JBrowser calls this column `species`, but the online FTP
+layout uses genome IDs such as `hg38`, not biological species names. Its default
+is the resolved genome ID, so both columns contain `hg38` for human or `mm39` for
+mouse. Explicit `--review_species` / standalone `--species` overrides are retained.
+When the assembly ID is omitted, a reference filename containing `GRCh38`/`hg38`
+supplies `hg38`; `GRCm39`/`mm39` supplies `mm39`. These are filename-based defaults,
+not assembly verification.
 For other references, or absent reference paths, unknown values are marked
 `EDIT_ME` in the samplesheet. Exact reference sequence names must match annotation
 names; no chromosome renaming or coordinate conversion is performed.
+
+For an existing bundle using `homo_sapiens`, change the **`species` column on every
+row** in `samplesheet.csv` to `hg38`, keeping `genome_id=hg38`. This includes the
+reference, annotations and read-evidence rows. The offline launcher refreshes its
+sheet from the shared sheet automatically. If JBrowser preparation already ran,
+rerun that preparation with the corrected samplesheet before using the generated
+FTP copy scripts; changing the sheet does not update an existing browser manifest.
+No rerun of LEAP's annotation or extension processing is required.
 
 The reference remains at its original server path; LEAP does not copy the genome
 into the review bundle. If available, the datacheck length input is converted to
@@ -120,6 +214,12 @@ manual_review/
   reads/{positive,negative,unsplit}.bam
   reads/{positive,negative,unsplit}.bam.csi
   reads/read-summary.json
+  sites/{cage,polya}/{positive,negative,unsplit}.bed
+  sites/{cage,polya}/source_records.tsv
+  sites/site-summary.json
+  region_presets/cageBed*.tsv              # Browser-visible original CAGE signal
+  install_review_region_presets.py
+  spreadsheets/transcripts.csv             # Combined transcript review table
   processing/<chromosome>_<strand>/stats/   # Corrected external-output stats
   processing/<chromosome>_<strand>/ids/     # Classification and dropped-model lists
   reference.chrom.sizes                   # When reference lengths are supplied
@@ -133,8 +233,8 @@ manual_review/
   README.txt
 ```
 
-The two sheets follow the current HAVANA JBrowser schema: annotation/reference
-rows in `samplesheet.csv`, and tags/descriptions separately in
+The two sheets follow the current HAVANA JBrowser schema: annotation, reference,
+alignment, interval-evidence and spreadsheet rows in `samplesheet.csv`, and tags/descriptions separately in
 `sample_metadata.csv`. Publication defaults to **public**, as requested. The FTP
 project is per sample; the public URL and filesystem directory are FTP **roots**,
 not project-specific subdirectories.
@@ -174,8 +274,8 @@ Paths in the sheets point to the published bundle. Update them and the script's
 
 ## Workflow and existing runs
 
-Four modules split raw annotation, process each LEAP chromosome/strand, prepare
-read alignments, then merge the views and write the launch bundle. They consume declared workflow
+Five modules split raw annotation, process each LEAP chromosome/strand, prepare
+read alignments and CAGE/poly(A) intervals, then merge the views and write the launch bundle. They consume declared workflow
 channels, so they do not race asynchronous published copies. Missing, duplicated
 or unexpected partitions fail clearly instead of silently producing an incomplete
 review. Sorting errors stop the build. Bundle publication occurs only after a
@@ -191,7 +291,8 @@ python3 bin/prepare_manual_review.py run /server/leap_results /server/new_review
   --reference-genome /server/reference/genome.fa \
   --reference-lengths /server/reference/genome.fa.fai \
   --reads /server/reads.bam --reads-index /server/reads.bam.csi \
-  --genome-id hg38 --species homo_sapiens \
+  --cage /server/CAGE.bed --polya /server/polyA.bed \
+  --genome-id hg38 --species hg38 \
   --jbrowser-pipeline /server/software/havana-jbrowser
 ```
 
@@ -209,12 +310,18 @@ options to retain the existing annotation-only command; the summary explicitly
 records `read_evidence.status=not_supplied`. Automatic pipeline builds always
 require read inputs when review preparation is enabled.
 
+Standalone builds also accept optional `--cage` and `--polya` inputs, independently.
+BED, GFF and GFF3 inputs may be gzipped. Omit both to keep the previous standalone
+behaviour; the summary explicitly records `site_evidence.status=not_supplied`.
+Automatic builds always stage both existing LEAP evidence inputs as declared
+workflow inputs; no additional pipeline parameter is needed.
+
 Requirements are Python 3.10+, local `sort`, and Samtools when including reads;
 no database or browser installation is needed to prepare the bundle. The read
 module declares Conda Python 3.11 and Samtools 1.18; deployments disabling Conda
 must supply those tools. Building all views needs temporary disk space for
 partition copies, sorting, BAM merging and the three delivered BAM/index pairs,
-plus publication copies. Large input BAMs can substantially increase disk usage
+plus publication copies and sorted site-evidence views/source-record tables. Large input BAMs can substantially increase disk usage
 and preparation time. The generated job requires your normal JBrowser/Nextflow
 environment. No additional read option is needed for automatic LEAP runs:
 `--reads` and `--reads_index` already provide the evidence.

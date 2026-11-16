@@ -53,6 +53,31 @@ def read_processor():
     return module
 
 
+def site_processor():
+    path = Path(__file__).with_name('prepare_review_sites.py')
+    if not path.is_file():
+        raise ValueError('Missing prepare_review_sites.py helper')
+    spec = importlib.util.spec_from_file_location('review_site_processor', path)
+    module = importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    return module
+
+
+def spreadsheet_helper():
+    candidates = [Path(__file__).with_name('build_leap_impact_report.py'),
+                  Path(__file__).resolve().parents[1] / 'assets/build_leap_impact_report.py']
+    path = next((p for p in candidates if p.is_file()), None)
+    if path is None:
+        raise ValueError('Missing build_leap_impact_report.py spreadsheet helper')
+    spec = importlib.util.spec_from_file_location('review_transcript_spreadsheet', path)
+    module = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(path.parent))
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.pop(0)
+    return module
+
+
 def records(path):
     opener = gzip.open if str(path).endswith('.gz') else open
     with opener(path, 'rt', encoding='utf-8') as handle:
@@ -154,6 +179,18 @@ def extension_partition(chromosome, strand, raw, extended, stats, output):
     with (folder / 'ids' / (name + '_classification.tsv')).open() as handle:
         classification = {row['transcript_id']: row['classification'] for row in csv.DictReader(handle, delimiter='\t')}
     original_stats = module.load_stats(stats)
+    spreadsheet = spreadsheet_helper()
+    final_models = spreadsheet.consistency.read_annotation(local_extended) if count else {}
+    raw_models = spreadsheet.consistency.read_annotation(raw) if final_models else {}
+    entries = spreadsheet.stats(stats)
+    processed_paths = [p for p in (folder / 'stats').iterdir() if p.is_file()]
+    if len(processed_paths) != 1:
+        raise ValueError('Expected exactly one processed stats file for transcript spreadsheet')
+    processed_stats = spreadsheet.stats(processed_paths[0])
+    processed_models = {key: {'output_stats': entry, 'class': classification[key[1]]}
+                        for key, entry in processed_stats.items()}
+    transcript_rows = spreadsheet.transcript_rows(raw_models, final_models, entries, processed_models)
+    spreadsheet.table(output / 'transcripts.csv', spreadsheet.TRANSCRIPT_FIELDS, transcript_rows)
     internal_ids = set()
     for identifier, category in classification.items():
         if not category.startswith('internal'):
@@ -177,7 +214,8 @@ def extension_partition(chromosome, strand, raw, extended, stats, output):
     local_extended.unlink()
     (output / 'partition.json').write_text(json.dumps(dict(kind='extended', chromosome=chromosome,
         strand=strand, source=Path(extended).name, stats_source=Path(stats).name,
-        counts=dict(result['counts'], internal_extension_models=len(internal_ids))), indent=2) + '\n')
+        counts=dict(result['counts'], internal_extension_models=len(internal_ids)),
+        transcript_rows=len(transcript_rows)), indent=2) + '\n')
 
 
 def sorted_annotation(paths, destination):
@@ -247,6 +285,9 @@ REVIEW_DIR=''' + shlex.quote(settings['published_root']) + '''
 cd -- "$REVIEW_DIR"
 [[ -f "$JBROWSER_PIPELINE/main.nf" ]] || { echo 'Set JBROWSER_PIPELINE to your server checkout.' >&2; exit 1; }
 command -v nextflow >/dev/null || { echo 'Load Nextflow before submitting this script.' >&2; exit 1; }
+if [[ -f "$REVIEW_DIR/install_review_region_presets.py" ]]; then
+    python3 "$REVIEW_DIR/install_review_region_presets.py" "$REVIEW_DIR" "$JBROWSER_PIPELINE"
+fi
 ''' + prepare_sheet + '''
 python3 - <<'PY_VALIDATE'
 import csv
@@ -284,7 +325,7 @@ echo ''' + shlex.quote('Offline JBrowser preparation finished: jbrowser_output_o
 '''
 
 
-def build_bundle(partitions, scopes, settings, output, reference_lengths=None, read_evidence=None):
+def build_bundle(partitions, scopes, settings, output, reference_lengths=None, read_evidence=None, site_evidence=None):
     output = Path(output).absolute()
     if output.exists() or output.is_symlink():
         raise ValueError('Output must be a new directory: ' + str(output))
@@ -292,13 +333,14 @@ def build_bundle(partitions, scopes, settings, output, reference_lengths=None, r
     if settings.get('publication', 'public') not in ('public', 'offline'):
         raise ValueError('Review publication must be public or offline')
     reference_name = Path(settings.get('reference_genome') or '').name.lower()
-    for names, genome, species in ((('grch38', 'hg38'), 'hg38', 'homo_sapiens'),
-                                    (('grcm39', 'mm39'), 'mm39', 'mus_musculus')):
+    for names, genome in ((('grch38', 'hg38'), 'hg38'), (('grcm39', 'mm39'), 'mm39')):
         if any(name in reference_name for name in names):
             if not settings.get('genome_id'):
                 settings['genome_id'] = genome
-            if not settings.get('species'):
-                settings['species'] = species
+    # JBrowser's legacy "species" column selects the FTP directory. The online
+    # layout groups data by assembly ID, rather than biological species name.
+    if not settings.get('species') and settings.get('genome_id'):
+        settings['species'] = settings['genome_id']
     expected = {(str(c), s) for c, s in scopes}
     if not expected or len(expected) != len(scopes):
         raise ValueError('Expected review scopes must be nonempty and unique')
@@ -318,6 +360,26 @@ def build_bundle(partitions, scopes, settings, output, reference_lengths=None, r
     if set(raw) != {c for c, s in expected} or set(extended) != expected:
         raise ValueError('Missing or unexpected raw/extended review partitions')
     read_summary = dict(status='not_supplied', description='Read evidence was not supplied to this standalone annotation-only build.')
+    site_summary = dict(status='not_supplied', description='CAGE/poly(A) evidence was not supplied to this standalone build.', sources={})
+    if site_evidence:
+        site_evidence = Path(site_evidence)
+        site_summary = json.loads((site_evidence/'site-summary.json').read_text())
+        if ({tuple(scope) for scope in site_summary.get('scopes', [])} != expected or
+                not site_summary.get('sources') or set(site_summary['sources'])-{'cage','polya'}):
+            raise ValueError('Site evidence has incompatible scopes or source types')
+        site_summary['status'] = 'available'
+        for kind, source in site_summary['sources'].items():
+            counts = source['counts']
+            if (source['region_format'] not in ('bed6','bed9','polyAtlas','cageBed6','cageBed9') or
+                    any(type(counts.get(v)) is not int or counts[v]<0 for v in ('positive','negative','unsplit','unstranded')) or
+                    counts['positive']+counts['negative']+counts['unstranded']!=counts['unsplit']):
+                raise ValueError('Invalid site-evidence counts or region format')
+            for view in ('positive','negative','unsplit'):
+                path = site_evidence/kind/(view+'.bed')
+                if not path.is_file():
+                    raise ValueError('Missing prepared site-evidence view: '+str(path))
+            if settings.get('site_input_'+kind):
+                source['original_input'] = settings['site_input_'+kind]
     if read_evidence:
         read_evidence = Path(read_evidence)
         read_summary = json.loads((read_evidence / 'read-summary.json').read_text())
@@ -396,6 +458,30 @@ def build_bundle(partitions, scopes, settings, output, reference_lengths=None, r
                         publication=settings.get('publication', 'public')))
                     metadata.append(dict(sample=sample, tags='LEAP;manual_review;read_evidence;' + view,
                         description=read_summary['description'] + ' Strand view: ' + view + '.'))
+        if site_evidence:
+            site_folder = staging/'sites';site_folder.mkdir()
+            if (site_evidence/'region_presets').is_dir():
+                shutil.copytree(site_evidence/'region_presets',staging/'region_presets')
+                installer = Path(__file__).with_name('install_review_region_presets.py')
+                shutil.copyfile(installer,staging/installer.name)
+            for kind, source in site_summary['sources'].items():
+                shutil.copytree(site_evidence/kind,site_folder/kind)
+                for view in ('positive','negative','unsplit'):
+                    count = source['counts'][view]
+                    relative = 'sites/'+kind+'/'+view+'.bed'
+                    manifest.append(dict(group=kind,strand=view,file=relative,track_type='regions',
+                        evidence_records=count,included_in_samplesheet=count>0))
+                    if count:
+                        sample='LEAP_'+('CAGE' if kind=='cage' else 'polyA')+'_'+view
+                        samples.append(dict(sample=sample,type='regions',file=str(published/relative),
+                            region_format=source['region_format'],chrom_sizes=chrom_sizes,
+                            genome_id=settings.get('genome_id') or 'EDIT_ME_ASSEMBLY',
+                            species=settings.get('species') or 'EDIT_ME_SPECIES',data_category='regions',
+                            track_category='LEAP '+('CAGE evidence' if kind=='cage' else 'poly(A) evidence'),
+                            ftp_project=settings.get('ftp_project') or 'LEAP_review',publication=settings.get('publication','public')))
+                        metadata.append(dict(sample=sample,tags='LEAP;manual_review;'+kind+';'+view,
+                            description=source['description']+' Strand view: '+view+'.'))
+            (site_folder/'site-summary.json').write_text(json.dumps(site_summary,indent=2)+'\n')
         if samples:
             reference = settings.get('reference_genome') or 'EDIT_ME/reference.fa'
             samples.insert(0, dict(sample='LEAP_reference', type='reference', file=reference,
@@ -403,6 +489,41 @@ def build_bundle(partitions, scopes, settings, output, reference_lengths=None, r
                 species=settings.get('species') or 'EDIT_ME_SPECIES', data_category='reference',
                 ftp_project=settings.get('ftp_project') or 'LEAP_review', publication=settings.get('publication', 'public')))
             metadata.insert(0, dict(sample='LEAP_reference', tags='LEAP;reference', description='Matching reference supplied for manual review.'))
+        spreadsheet = spreadsheet_helper()
+        spreadsheet_dir = staging / 'spreadsheets'; spreadsheet_dir.mkdir()
+        relative_sheet = 'spreadsheets/transcripts.csv'
+        transcript_count = 0
+        with (staging / relative_sheet).open('w', encoding='utf-8', newline='') as handle:
+            writer = csv.DictWriter(handle, fieldnames=spreadsheet.REVIEW_TRANSCRIPT_FIELDS, extrasaction='ignore')
+            writer.writeheader()
+            for (chromosome, strand), (folder, partition) in sorted(extended.items()):
+                source = folder / 'transcripts.csv'
+                with source.open(newline='', encoding='utf-8') as input_handle:
+                    reader = csv.DictReader(input_handle)
+                    if reader.fieldnames != spreadsheet.TRANSCRIPT_FIELDS:
+                        raise ValueError('Invalid transcript spreadsheet columns: ' + str(source))
+                    identifiers = set()
+                    for row in reader:
+                        if (None in row or any(v is None for v in row.values()) or
+                                row['chromosome'] != chromosome or row['strand'] != strand or
+                                not row['transcript_id'] or row['transcript_id'] in identifiers):
+                            raise ValueError('Invalid scope, duplicate ID or malformed transcript spreadsheet row: ' + str(source))
+                        identifiers.add(row['transcript_id']); writer.writerow(row)
+                    if len(identifiers) != partition.get('transcript_rows'):
+                        raise ValueError('Transcript spreadsheet row count differs from partition: ' + str(source))
+                    transcript_count += len(identifiers)
+        expected_count = next(m['transcripts'] for m in manifest if m['group']=='leaped' and m['strand']=='unsplit')
+        if transcript_count != expected_count:
+            raise ValueError('Transcript spreadsheet membership count differs from original LEAP annotation')
+        sample = 'LEAP_transcripts'
+        manifest.append(dict(group='transcript_review', strand='unsplit', file=relative_sheet,
+            track_type='spreadsheet', transcript_rows=transcript_count, included_in_samplesheet=True))
+        samples.append(dict(sample=sample, type='spreadsheet', file=str(published / relative_sheet),
+            genome_id=settings.get('genome_id', ''), species=settings.get('species') or 'EDIT_ME_SPECIES',
+            data_category='leap_review', ftp_project=settings.get('ftp_project') or 'LEAP_review',
+            publication=settings.get('publication', 'public')))
+        metadata.append(dict(sample=sample, tags='LEAP;manual_review;transcripts;spreadsheet',
+            description='Compact per-transcript LEAP review table: extension lengths, support, read counts, internal/external classification and JBrowse search labels. Detailed raw/original/external coordinates are retained in impact/transcripts.csv.'))
         for key, (folder, data) in extended.items():
             target = staging / 'processing' / (key[0] + '_' + key[1])
             target.parent.mkdir(exist_ok=True)
@@ -413,10 +534,11 @@ def build_bundle(partitions, scopes, settings, output, reference_lengths=None, r
                   [dict(row, publication='offline') for row in samples])
         write_csv(staging / 'sample_metadata.csv', ['sample', 'tags', 'description'], metadata)
         write_csv(staging / 'track_manifest.tsv', ['group', 'strand', 'file', 'features', 'transcripts',
-            'included_in_samplesheet', 'track_type', 'alignment_records', 'index_file'], manifest, '\t')
+            'included_in_samplesheet', 'track_type', 'alignment_records', 'index_file', 'transcript_rows', 'evidence_records'], manifest, '\t')
         summary = dict(settings=settings, scopes=sorted(expected), tracks=manifest,
             partitions=[data for folder, data in extended.values()], raw_partitions=[data for folder, data in raw.values()],
-            read_evidence=read_summary)
+            read_evidence=read_summary, site_evidence=site_summary, spreadsheets=[dict(sample=sample, file=relative_sheet,
+                transcript_rows=transcript_count, data_category='leap_review')])
         (staging / 'review-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
         script = staging / 'run_jbrowser.sbatch'
         script.write_text(launch_script(settings))
@@ -433,9 +555,18 @@ def build_bundle(partitions, scopes, settings, output, reference_lengths=None, r
             'Raw/leaped views retain gene rows; processed external/internal views are transcript-oriented.\n'
             'Header-only files are retained but omitted from the samplesheet. See track_manifest.tsv.\n'
             'processing/ contains corrected external stats and classification/dropped-no-CDS tables.\n\n'
+            'spreadsheets/transcripts.csv contains one row per original LEAP transcript with extension details and JBrowse search labels.\n'
+            'The shared table omits raw_start/raw_end/leap_start/leap_end/external_start/external_end; full audit coordinates remain in impact/transcripts.csv.\n'
+            'The table is registered as type=spreadsheet in public/offline samplesheets; JBrowser copies it unchanged, not as a browser track.\n'
+            'The species column uses the FTP genome-ID namespace. Spreadsheet publication uses spreadsheet/<genome_id>/leap_review/.\n\n'
             'When supplied, reads/ contains positive, negative and unsplit mapped-input BAMs with CSI indexes.\n'
             'BAM flag 0x10 defines orientation. Alignment counts are records, not molecules or selected-extension support.\n'
             'Empty alignment views remain on disk but are omitted from JBrowser sheets.\n'
+            'sites/cage and sites/polya contain positive/negative/unsplit interval evidence and original source-record tables.\n'
+            'Site views show all supplied evidence in scope, not just sites selected for transcript extensions.\n'
+            'CAGE originalCageScore preserves the exact source score in browser feature details, separately from its BED display score.\n'
+            'Launchers install bundled region_presets into JBrowser if absent and refuse to overwrite conflicting definitions.\n'
+            'Unstranded sites appear only in unsplit views. Empty site views are omitted from JBrowser sheets.\n'
             'Alignment rows use reference_file; update those entries too when changing the reference after generation.\n'
             'Before launch: complete any EDIT_ME cells in samplesheet.csv; check the server reference and assembly.\n'
             'Edit JBrowser checkout, FTP roots, hub email and Slurm settings in run_jbrowser.sbatch.\n'
@@ -469,14 +600,17 @@ def main():
         bundle.add_argument(name)
     bundle.add_argument('--reference-lengths')
     bundle.add_argument('--read-evidence')
+    bundle.add_argument('--site-evidence')
     run = sub.add_parser('run')
     run.add_argument('leap_output_dir', type=Path); run.add_argument('output', type=Path)
     run.add_argument('--chromosomes', nargs='+', required=True)
     run.add_argument('--strand', choices=('positive', 'negative', 'both'), default='both')
     run.add_argument('--reference-lengths'); run.add_argument('--reference-genome')
     run.add_argument('--reads', type=Path); run.add_argument('--reads-index', type=Path)
+    run.add_argument('--cage',type=Path);run.add_argument('--polya',type=Path)
     run.add_argument('--read-threads', type=int, default=1)
-    for name in ('genome-id', 'species', 'jbrowser-pipeline', 'public-base-url', 'ftp-target-dir', 'hub-email'):
+    run.add_argument('--species', default='', help='FTP directory name; defaults to genome ID (legacy samplesheet species column)')
+    for name in ('genome-id', 'jbrowser-pipeline', 'public-base-url', 'ftp-target-dir', 'hub-email'):
         run.add_argument('--' + name, default='')
     run.add_argument('--ftp-project', default='LEAP_review')
     run.add_argument('--publication', choices=('public', 'offline'), default='public')
@@ -488,7 +622,7 @@ def main():
             extension_partition(args.chromosome, args.strand, args.raw, args.extended, args.stats, args.output)
         elif args.command == 'bundle':
             build_bundle(sorted(Path(args.partitions).iterdir()), json.loads(Path(args.manifest).read_text()),
-                         json.loads(Path(args.settings).read_text()), args.output, args.reference_lengths, args.read_evidence)
+                         json.loads(Path(args.settings).read_text()), args.output, args.reference_lengths, args.read_evidence, args.site_evidence)
         else:
             if bool(args.reads) != bool(args.reads_index):
                 raise ValueError('--reads and --reads-index must be supplied together')
@@ -522,7 +656,12 @@ def main():
                     provenance = json.loads((evidence / 'read-summary.json').read_text())
                     provenance['original_input'] = dict(bam=str(args.reads.resolve()), index=str(args.reads_index.resolve()))
                     (evidence / 'read-summary.json').write_text(json.dumps(provenance, indent=2) + '\n')
-                build_bundle(sorted(parts.iterdir()), scopes, settings, args.output, args.reference_lengths, evidence)
+                sites = None
+                if args.cage or args.polya:
+                    sites = Path(temporary)/'site_evidence'
+                    site_processor().prepare_sites({kind:getattr(args,kind) for kind in ('cage','polya') if getattr(args,kind)},
+                        scopes,sites,args.reference_lengths)
+                build_bundle(sorted(parts.iterdir()), scopes, settings, args.output, args.reference_lengths, evidence, sites)
         return 0
     except (OSError, ValueError, KeyError, TypeError, EOFError, csv.Error, subprocess.SubprocessError) as error:
         print('ERROR: ' + str(error), file=sys.stderr)

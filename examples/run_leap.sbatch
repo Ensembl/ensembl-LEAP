@@ -49,9 +49,13 @@ RESUME=false
 # generated public launch script. The reference above is used for both modes.
 # Manual review also prepares positive/negative/unsplit mapped-input BAMs with
 # CSI indexes from READS_BAM. Allow space for these views and temporary copies.
+# The review bundle also registers spreadsheets/transcripts.csv for public and
+# offline JBrowser sharing, including extension details and search labels.
+# CAGE_BED and POLYA_BED also produce positive/negative/unsplit interval tracks,
+# with original signal values retained in source-record tables under sites/.
 # -----------------------------------------------------------------------------
 REVIEW_GENOME_ID="hg38"
-REVIEW_SPECIES="homo_sapiens"
+REVIEW_SPECIES="$REVIEW_GENOME_ID"  # Legacy species column controls the FTP directory.
 JBROWSER_PIPELINE="/path/to/havana-jbrowser"
 FTP_PROJECT="LEAP_review"
 PUBLIC_BASE_URL=""               # e.g. https://ftp.example.org/root

@@ -17,11 +17,13 @@ workflow {
             file("${root}/fixed_extensions/1_${s}_LE_protected.bed"),
             file("${root}/partial_protection/1_${s}_partial_protection.tsv")] }
     lengths = params.no_reference ? Channel.value([]) : Channel.value(file("${root}/reference.sizes"))
-    settings = Channel.value([genome_id: 'hg38', species: 'homo_sapiens', publication: 'public',
+    settings = Channel.value([genome_id: 'hg38', publication: 'public',
         published_root: file("${params.output_directory}/manual_review").toAbsolutePath().toString()])
     reads = params.missing_reads ? Channel.empty() : Channel.of(['1',
         file("${root}/reads/1.bam", checkIfExists: true), file("${root}/reads/1.bam.csi", checkIfExists: true)])
-    MANUAL_REVIEW(scopes, raw, finals, lengths, settings, reads)
+    MANUAL_REVIEW(scopes, raw, finals, lengths, settings, reads,
+        Channel.value(file("${root}/CAGE.bed",checkIfExists:true)),
+        Channel.value(file("${root}/polyA.bed",checkIfExists:true)))
     if (params.with_checks) {
         selected = Channel.of('positive', 'negative').map { s -> ["1_${s}".toString(),
             file("${root}/fixed_extensions_before_partial_protection/test_1_${s}_FE_SCF.bed"),

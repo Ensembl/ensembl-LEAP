@@ -2,6 +2,11 @@
 
 Every LEAP run now writes `impact/index.html`, alongside machine-readable statistics. Open the HTML file directly in a browser, or share the **whole `impact/` directory** so its CSV downloads remain available. Charts and filters work offline, without installing a web server. The print button provides a compact view for saving as PDF.
 
+When manual-review preparation is enabled, a compact version of the per-transcript table is also
+included at `manual_review/spreadsheets/transcripts.csv`, omitting the six raw/LEAP/external coordinate columns while retaining JBrowse search labels, and registered as a
+downloadable spreadsheet in both JBrowser samplesheets. See [manual review](manual_review.md#transcript-review-spreadsheet)
+for the public FTP and offline destinations.
+
 The report runs independently of manual-review preparation. With datachecks enabled, it includes the completed datacheck summary and finishes before the final gate. A failing datacheck does not suppress the impact report. When checks are explicitly disabled, statistics still run and the dashboard states `NOT_RUN` for validation. An incomplete statistics report is published with diagnostics and fails the run after review preparation completes.
 
 ## What the report measures

@@ -120,8 +120,11 @@ class NextflowDatachecksTests(unittest.TestCase):
             env = dict(os.environ,NXF_OFFLINE='true',NXF_DISABLE_CHECK_LATEST='true')
             secrets=root/"database's connection.json"
             secrets.write_text(json.dumps(dict(host='unused',port=3306,user='unused',password='',database='unused')))
+            cage = root/'CAGE.bed'; cage.write_text('1\t0\t1\tcage\t1\t+\n')
+            polya = root/'polyA.bed'; polya.write_text('1\t0\t1\tpolya\t1\t+\n')
             def run(*arguments):
-                return subprocess.run([NEXTFLOW,'run',str(ROOT/'main.nf'),'-preview','--db_secrets',str(secrets),*arguments],
+                return subprocess.run([NEXTFLOW,'run',str(ROOT/'main.nf'),'-preview','--db_secrets',str(secrets),
+                    '--cage',str(cage),'--polya',str(polya),*arguments],
                     cwd=root,env=env,capture_output=True,text=True,timeout=90)
             result = run()
             self.assertNotEqual(result.returncode,0)
